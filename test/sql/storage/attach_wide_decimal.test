@@ -1,0 +1,501 @@
+# name: test/sql/storage/attach_wide_decimal.test
+# description: Test decimals of more than 38 digits (Postgres NUMERIC columns have a precision of up to 1000 digits)
+# group: [storage]
+
+require postgres_scanner
+
+require-env POSTGRES_TEST_DATABASE_AVAILABLE
+
+statement ok
+ATTACH 'dbname=postgresscanner' AS s (TYPE POSTGRES)
+
+statement ok
+CALL postgres_execute('s', 'DROP TABLE IF EXISTS wide_numerics')
+
+statement ok
+CALL postgres_execute('s', 'DROP TABLE IF EXISTS wide_numeric_scales')
+
+statement ok
+CALL postgres_execute('s', 'DROP TABLE IF EXISTS wide_numeric_arrays')
+
+# tables created in Postgres: a NUMERIC(p,s) maps to DECIMAL(p,s) for every precision
+statement ok
+CALL postgres_execute('s', 'CREATE TABLE wide_numerics(id INTEGER, n39 NUMERIC(39,0), n40_4 NUMERIC(40,4), n100_20 NUMERIC(100,20), n1000 NUMERIC(1000,0), n1000_500 NUMERIC(1000,500))')
+
+statement ok
+CALL postgres_execute('s', $$INSERT INTO wide_numerics VALUES
+    (1, repeat('9', 39)::NUMERIC, (repeat('9', 36) || '.' || repeat('9', 4))::NUMERIC, (repeat('9', 80) || '.' || repeat('9', 20))::NUMERIC, repeat('9', 1000)::NUMERIC, (repeat('9', 500) || '.' || repeat('9', 500))::NUMERIC),
+    (2, ('-' || repeat('9', 39))::NUMERIC, ('-' || repeat('9', 36) || '.' || repeat('9', 4))::NUMERIC, ('-' || repeat('9', 80) || '.' || repeat('9', 20))::NUMERIC, ('-' || repeat('9', 1000))::NUMERIC, ('-' || repeat('9', 500) || '.' || repeat('9', 500))::NUMERIC),
+    (3, 100000000000000000000000000000000000000, 0.0001, 0.00000000000000000001, 1, ('0.' || repeat('0', 499) || '1')::NUMERIC),
+    (4, 0, 0, 0, 0, 0),
+    (5, 170141183460469231731687303715884105727, 123456789012345678901234567890123456.1234, 12345678901234567890123456789012345678901234567890.12345678901234567890, ('1' || repeat('0', 999))::NUMERIC, ('1' || repeat('0', 499) || '.5')::NUMERIC),
+    (6, NULL, NULL, NULL, NULL, NULL)$$)
+
+# scales that are negative or larger than the precision (Postgres 15+)
+statement ok
+CALL postgres_execute('s', 'CREATE TABLE wide_numeric_scales(id INTEGER, neg NUMERIC(5,-3), wide_neg NUMERIC(40,-10), frac NUMERIC(3,6), wide_frac NUMERIC(10,50))')
+
+statement ok
+CALL postgres_execute('s', $$INSERT INTO wide_numeric_scales VALUES
+    (1, 12345678, repeat('7', 50)::NUMERIC, 0.000123, ('0.' || repeat('0', 40) || '1234567891')::NUMERIC),
+    (2, -99999499, ('-' || repeat('9', 40) || repeat('0', 10))::NUMERIC, -0.000999, ('-0.' || repeat('0', 40) || '9999999999')::NUMERIC),
+    (3, 0, 0, 0, 0),
+    (4, NULL, NULL, NULL, NULL)$$)
+
+statement ok
+CALL postgres_execute('s', 'CREATE TABLE wide_numeric_arrays(id INTEGER, a NUMERIC(50,5)[])')
+
+statement ok
+CALL postgres_execute('s', $$INSERT INTO wide_numeric_arrays VALUES
+    (1, ARRAY[repeat('9', 45)::NUMERIC, NULL, -0.00001, ('-' || repeat('9', 45) || '.99999')::NUMERIC]),
+    (2, ARRAY[]::NUMERIC[]),
+    (3, NULL)$$)
+
+foreach plain FALSE TRUE
+
+statement ok
+SET pg_use_text_protocol = {plain}
+
+statement ok
+CALL postgres_clear_cache()
+
+query IIIII
+SELECT typeof(COLUMNS(* EXCLUDE (id))) FROM s.wide_numerics LIMIT 1
+----
+DECIMAL(39,0)	DECIMAL(40,4)	DECIMAL(100,20)	DECIMAL(1000,0)	DECIMAL(1000,500)
+
+query IIII
+SELECT id, n39, n40_4, n100_20 FROM s.wide_numerics ORDER BY id
+----
+1	999999999999999999999999999999999999999	999999999999999999999999999999999999.9999	99999999999999999999999999999999999999999999999999999999999999999999999999999999.99999999999999999999
+2	-999999999999999999999999999999999999999	-999999999999999999999999999999999999.9999	-99999999999999999999999999999999999999999999999999999999999999999999999999999999.99999999999999999999
+3	100000000000000000000000000000000000000	0.0001	0.00000000000000000001
+4	0	0.0000	0.00000000000000000000
+5	170141183460469231731687303715884105727	123456789012345678901234567890123456.1234	12345678901234567890123456789012345678901234567890.12345678901234567890
+6	NULL	NULL	NULL
+
+query III
+SELECT id, n1000::VARCHAR = repeat('9', 1000), n1000_500::VARCHAR = repeat('9', 500) || '.' || repeat('9', 500) FROM s.wide_numerics WHERE id = 1
+----
+1	true	true
+
+query III
+SELECT id, n1000::VARCHAR = '-' || repeat('9', 1000), n1000_500::VARCHAR = '-' || repeat('9', 500) || '.' || repeat('9', 500) FROM s.wide_numerics WHERE id = 2
+----
+2	true	true
+
+query III
+SELECT id, n1000::VARCHAR, n1000_500::VARCHAR = '0.' || repeat('0', 499) || '1' FROM s.wide_numerics WHERE id = 3
+----
+3	1	true
+
+query III
+SELECT id, n1000::VARCHAR, n1000_500::VARCHAR = '0.' || repeat('0', 500) FROM s.wide_numerics WHERE id = 4
+----
+4	0	true
+
+query III
+SELECT id, n1000::VARCHAR = '1' || repeat('0', 999), n1000_500::VARCHAR = '1' || repeat('0', 499) || '.5' || repeat('0', 499) FROM s.wide_numerics WHERE id = 5
+----
+5	true	true
+
+query III
+SELECT id, n1000, n1000_500 FROM s.wide_numerics WHERE id = 6
+----
+6	NULL	NULL
+
+# the values are exact
+query II
+SELECT n39 + 1, n100_20 + 0.00000000000000000001 FROM s.wide_numerics WHERE id = 1
+----
+1000000000000000000000000000000000000000	100000000000000000000000000000000000000000000000000000000000000000000000000000000.00000000000000000000
+
+# filters on wide decimal columns
+query I
+SELECT id FROM s.wide_numerics WHERE n39 = 999999999999999999999999999999999999999
+----
+1
+
+query I
+SELECT id FROM s.wide_numerics WHERE n40_4 >= 123456789012345678901234567890123456.1234 ORDER BY id
+----
+1
+5
+
+query I
+SELECT id FROM s.wide_numerics WHERE n100_20 < -99999999999999999999999999999999999999999999999999999999999999999999999999999999.9999999999999999999
+----
+2
+
+query I
+SELECT id FROM s.wide_numerics WHERE n100_20 IN (0.00000000000000000001, 12345678901234567890123456789012345678901234567890.1234567890123456789) ORDER BY id
+----
+3
+5
+
+query I
+SELECT id FROM s.wide_numerics WHERE n1000 = repeat('9', 1000)::DECIMAL(1000,0)
+----
+1
+
+# aggregates
+query III
+SELECT min(n39), max(n39), count(n1000) FROM s.wide_numerics
+----
+-999999999999999999999999999999999999999	999999999999999999999999999999999999999	5
+
+query I
+SELECT sum(n39) FROM s.wide_numerics
+----
+270141183460469231731687303715884105727
+
+# negative scales and scales beyond the precision
+query IIII
+SELECT typeof(COLUMNS(* EXCLUDE (id))) FROM s.wide_numeric_scales LIMIT 1
+----
+DECIMAL(8,0)	DECIMAL(50,0)	DECIMAL(6,6)	DECIMAL(50,50)
+
+query IIIII
+SELECT * FROM s.wide_numeric_scales ORDER BY id
+----
+1	12346000	77777777777777777777777777777777777777780000000000	0.000123	0.00000000000000000000000000000000000000001234567891
+2	-99999000	-99999999999999999999999999999999999999990000000000	-0.000999	-0.00000000000000000000000000000000000000009999999999
+3	0	0	0.000000	0.00000000000000000000000000000000000000000000000000
+4	NULL	NULL	NULL	NULL
+
+# arrays
+query II
+SELECT typeof(a), a FROM s.wide_numeric_arrays ORDER BY id
+----
+DECIMAL(50,5)[]	[999999999999999999999999999999999999999999999.00000, NULL, -0.00001, -999999999999999999999999999999999999999999999.99999]
+DECIMAL(50,5)[]	[]
+DECIMAL(50,5)[]	NULL
+
+# postgres_query
+query II
+SELECT typeof(n), n FROM postgres_query('s', 'SELECT n100_20 AS n FROM wide_numerics WHERE id = 5')
+----
+DECIMAL(100,20)	12345678901234567890123456789012345678901234567890.12345678901234567890
+
+query II
+SELECT typeof(n), n FROM postgres_query('s', 'SELECT (n39 * 10)::NUMERIC(45,2) AS n FROM wide_numerics WHERE id = 2')
+----
+DECIMAL(45,2)	-9999999999999999999999999999999999999990.00
+
+# CREATE TABLE from DuckDB with wide decimals, INSERT and read back
+statement ok
+CREATE OR REPLACE TABLE s.wide_decimal_copy (id INTEGER, d39 DECIMAL(39,0), d65_30 DECIMAL(65,30), d100_20 DECIMAL(100,20), d1000 DECIMAL(1000,0), d1000_500 DECIMAL(1000,500), d1000_1000 DECIMAL(1000,1000))
+
+statement ok
+INSERT INTO s.wide_decimal_copy VALUES
+    (1, 999999999999999999999999999999999999999, 99999999999999999999999999999999999.999999999999999999999999999999, 99999999999999999999999999999999999999999999999999999999999999999999999999999999.99999999999999999999, repeat('9', 1000), repeat('9', 500) || '.' || repeat('9', 500), '0.' || repeat('9', 1000)),
+    (2, -999999999999999999999999999999999999999, -99999999999999999999999999999999999.999999999999999999999999999999, -99999999999999999999999999999999999999999999999999999999999999999999999999999999.99999999999999999999, '-' || repeat('9', 1000), '-' || repeat('9', 500) || '.' || repeat('9', 500), '-0.' || repeat('9', 1000)),
+    (3, 1, 0.000000000000000000000000000001, 0.00000000000000000001, 10000, '0.' || repeat('0', 499) || '1', '0.' || repeat('0', 999) || '1'),
+    (4, 0, 0, 0, 0, 0, 0),
+    (5, 12345, 1234.5, 123456789.000000001, 123456789, 12345678.9, 0.5),
+    (6, NULL, NULL, NULL, NULL, NULL, NULL)
+
+query IIIIII
+SELECT typeof(COLUMNS(* EXCLUDE (id))) FROM s.wide_decimal_copy LIMIT 1
+----
+DECIMAL(39,0)	DECIMAL(65,30)	DECIMAL(100,20)	DECIMAL(1000,0)	DECIMAL(1000,500)	DECIMAL(1000,1000)
+
+query IIII
+SELECT id, d39, d65_30, d100_20 FROM s.wide_decimal_copy ORDER BY id
+----
+1	999999999999999999999999999999999999999	99999999999999999999999999999999999.999999999999999999999999999999	99999999999999999999999999999999999999999999999999999999999999999999999999999999.99999999999999999999
+2	-999999999999999999999999999999999999999	-99999999999999999999999999999999999.999999999999999999999999999999	-99999999999999999999999999999999999999999999999999999999999999999999999999999999.99999999999999999999
+3	1	0.000000000000000000000000000001	0.00000000000000000001
+4	0	0.000000000000000000000000000000	0.00000000000000000000
+5	12345	1234.500000000000000000000000000000	123456789.00000000100000000000
+6	NULL	NULL	NULL
+
+query IIII
+SELECT id, d1000::VARCHAR = repeat('9', 1000), d1000_500::VARCHAR = repeat('9', 500) || '.' || repeat('9', 500), d1000_1000::VARCHAR = '.' || repeat('9', 1000) FROM s.wide_decimal_copy WHERE id = 1
+----
+1	true	true	true
+
+query IIII
+SELECT id, d1000::VARCHAR = '-' || repeat('9', 1000), d1000_500::VARCHAR = '-' || repeat('9', 500) || '.' || repeat('9', 500), d1000_1000::VARCHAR = '-.' || repeat('9', 1000) FROM s.wide_decimal_copy WHERE id = 2
+----
+2	true	true	true
+
+query IIII
+SELECT id, d1000, d1000_500::VARCHAR = '0.' || repeat('0', 499) || '1', d1000_1000::VARCHAR = '.' || repeat('0', 999) || '1' FROM s.wide_decimal_copy WHERE id = 3
+----
+3	10000	true	true
+
+query IIII
+SELECT id, d1000, d1000_500::VARCHAR = '12345678.9' || repeat('0', 499), d1000_1000::VARCHAR = '.5' || repeat('0', 999) FROM s.wide_decimal_copy WHERE id = 5
+----
+5	123456789	true	true
+
+# Postgres holds the same values
+query IIII
+SELECT * FROM postgres_query('s', $$SELECT id, d1000::TEXT = repeat('9', 1000), d1000_500::TEXT = repeat('9', 500) || '.' || repeat('9', 500), d1000_1000::TEXT = '0.' || repeat('9', 1000) FROM wide_decimal_copy WHERE id = 1$$)
+----
+1	true	true	true
+
+query IIII
+SELECT * FROM postgres_query('s', $$SELECT id, d39::TEXT, d65_30::TEXT, d100_20::TEXT FROM wide_decimal_copy WHERE id IN (2, 3, 5) ORDER BY id$$)
+----
+2	-999999999999999999999999999999999999999	-99999999999999999999999999999999999.999999999999999999999999999999	-99999999999999999999999999999999999999999999999999999999999999999999999999999999.99999999999999999999
+3	1	0.000000000000000000000000000001	0.00000000000000000001
+5	12345	1234.500000000000000000000000000000	123456789.00000000100000000000
+
+# INSERT ... SELECT between Postgres tables
+statement ok
+INSERT INTO s.wide_decimal_copy (id, d39, d100_20, d1000, d1000_500) SELECT id + 10, n39, n100_20, n1000, n1000_500 FROM s.wide_numerics
+
+query I
+SELECT count(*) FROM s.wide_decimal_copy c JOIN s.wide_numerics n ON c.id = n.id + 10 AND c.d39 IS NOT DISTINCT FROM n.n39 AND c.d100_20 IS NOT DISTINCT FROM n.n100_20 AND c.d1000 IS NOT DISTINCT FROM n.n1000 AND c.d1000_500 IS NOT DISTINCT FROM n.n1000_500
+----
+6
+
+# UPDATE and DELETE
+statement ok
+UPDATE s.wide_decimal_copy SET d100_20 = d100_20 - 0.00000000000000000001 WHERE d39 = 999999999999999999999999999999999999999
+
+query II
+SELECT id, d100_20 FROM s.wide_decimal_copy WHERE d39 = 999999999999999999999999999999999999999 ORDER BY id
+----
+1	99999999999999999999999999999999999999999999999999999999999999999999999999999999.99999999999999999998
+11	99999999999999999999999999999999999999999999999999999999999999999999999999999999.99999999999999999998
+
+statement ok
+DELETE FROM s.wide_decimal_copy WHERE d100_20 = 99999999999999999999999999999999999999999999999999999999999999999999999999999999.99999999999999999998
+
+query I
+SELECT count(*) FROM s.wide_decimal_copy
+----
+10
+
+# a value that does not fit the column is an error
+statement error
+INSERT INTO s.wide_decimal_copy (id, d39) VALUES (99, 1000000000000000000000000000000000000000)
+----
+<REGEX>:.*(Could not cast|out of range|Out of range|overflow).*
+
+# CREATE TABLE AS
+statement ok
+CREATE OR REPLACE TABLE s.wide_decimal_ctas AS
+SELECT i AS id,
+       (repeat('9', 39)::DECIMAL(39,0) - i)::DECIMAL(39,0) AS d39,
+       (repeat('9', 96) || '.' || repeat('9', 4))::DECIMAL(100,4) AS d100_4,
+       CASE WHEN i = 2 THEN NULL ELSE -(repeat('1', 1000)::DECIMAL(1000,0)) END AS d1000
+FROM range(3) t(i)
+
+query IIII
+SELECT typeof(id), typeof(d39), typeof(d100_4), typeof(d1000) FROM s.wide_decimal_ctas LIMIT 1
+----
+BIGINT	DECIMAL(39,0)	DECIMAL(100,4)	DECIMAL(1000,0)
+
+query IIII
+SELECT id, d39, d100_4, d1000::VARCHAR = '-' || repeat('1', 1000) FROM s.wide_decimal_ctas ORDER BY id
+----
+0	999999999999999999999999999999999999999	999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999.9999	true
+1	999999999999999999999999999999999999998	999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999.9999	true
+2	999999999999999999999999999999999999997	999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999.9999	NULL
+
+# HUGEINT and UHUGEINT have up to 39 digits: they are created as NUMERIC(39,0) and keep every value
+statement ok
+CREATE OR REPLACE TABLE s.wide_decimal_hugeint (id INTEGER, h HUGEINT, u UHUGEINT)
+
+statement ok
+INSERT INTO s.wide_decimal_hugeint VALUES
+    (1, 170141183460469231731687303715884105727, 340282366920938463463374607431768211455),
+    (2, -170141183460469231731687303715884105728, 0),
+    (3, NULL, NULL)
+
+query II
+SELECT typeof(h), typeof(u) FROM s.wide_decimal_hugeint LIMIT 1
+----
+DECIMAL(39,0)	DECIMAL(39,0)
+
+query III
+SELECT id, h::HUGEINT, u::UHUGEINT FROM s.wide_decimal_hugeint ORDER BY id
+----
+1	170141183460469231731687303715884105727	340282366920938463463374607431768211455
+2	-170141183460469231731687303715884105728	0
+3	NULL	NULL
+
+statement ok
+CREATE OR REPLACE TABLE s.wide_decimal_hugeint AS
+SELECT 170141183460469231731687303715884105727::HUGEINT AS h, 340282366920938463463374607431768211455::UHUGEINT AS u
+
+query IIII
+SELECT typeof(h), typeof(u), h, u FROM s.wide_decimal_hugeint
+----
+DECIMAL(39,0)	DECIMAL(39,0)	170141183460469231731687303715884105727	340282366920938463463374607431768211455
+
+# HUGEINT results of pushed down queries keep every value (sum of BIGINT is a HUGEINT)
+statement ok
+CREATE OR REPLACE TABLE s.wide_decimal_sum AS SELECT 170141183460469231731687303715884105727::DECIMAL(39,0) AS d, 9223372036854775807::BIGINT AS b FROM range(4)
+
+query II
+SELECT typeof(sum(b)), sum(b) FROM s.wide_decimal_sum
+----
+HUGEINT	36893488147419103228
+
+query I
+SELECT sum(d) FROM s.wide_decimal_sum
+----
+680564733841876926926749214863536422908
+
+query I
+SELECT max(d::HUGEINT) FROM s.wide_decimal_sum
+----
+170141183460469231731687303715884105727
+
+endloop
+
+statement ok
+RESET pg_use_text_protocol
+
+statement ok
+CALL postgres_clear_cache()
+
+# lists of wide decimals
+statement ok
+CREATE OR REPLACE TABLE s.wide_decimal_lists AS
+SELECT [repeat('9', 45)::DECIMAL(50,5), NULL, -0.00001::DECIMAL(50,5)] AS l UNION ALL SELECT [] UNION ALL SELECT NULL
+
+query II
+SELECT typeof(l), l FROM s.wide_decimal_lists
+----
+DECIMAL(50,5)[]	[999999999999999999999999999999999999999999999.00000, NULL, -0.00001]
+DECIMAL(50,5)[]	[]
+DECIMAL(50,5)[]	NULL
+
+# the precision of a Postgres NUMERIC column is at most 1000 digits
+statement error
+CREATE TABLE s.wide_decimal_too_wide (d DECIMAL(1001,0))
+----
+the precision of a Postgres NUMERIC column is at most 1000 digits
+
+statement error
+CREATE TABLE s.wide_decimal_too_wide AS SELECT repeat('9', 1001)::DECIMAL(1001,0) AS d
+----
+the precision of a Postgres NUMERIC column is at most 1000 digits
+
+statement error
+ALTER TABLE s.wide_decimal_copy ADD COLUMN too_wide DECIMAL(2000,10)
+----
+the precision of a Postgres NUMERIC column is at most 1000 digits
+
+# a value that does not fit the type it is read as is an error, not a rounded value
+statement error
+SELECT * FROM postgres_query('s', $$SELECT NULL::NUMERIC(40,2) AS n UNION ALL SELECT 'NaN'::NUMERIC(40,2)$$)
+----
+Unsupported NUMERIC value: NaN
+
+statement ok
+SET pg_numeric_nan_as_null = true
+
+query I
+SELECT * FROM postgres_query('s', $$SELECT 1.5::NUMERIC(40,2) AS n UNION ALL SELECT 'NaN'::NUMERIC(40,2)$$)
+----
+1.50
+NULL
+
+statement ok
+RESET pg_numeric_nan_as_null
+
+# with max_decimal_width = 38 the session does not bind wider decimals: the columns are read as DOUBLE (or as VARCHAR
+# with pg_numeric_as_varchar), as they were before DuckDB had decimals of more than 38 digits
+statement ok
+SET max_decimal_width = 38
+
+statement ok
+CALL postgres_clear_cache()
+
+query IIIII
+SELECT typeof(COLUMNS(* EXCLUDE (id))) FROM s.wide_numerics LIMIT 1
+----
+DOUBLE	DOUBLE	DOUBLE	DOUBLE	DOUBLE
+
+query II
+SELECT id, n39 FROM s.wide_numerics WHERE id <= 3 ORDER BY id
+----
+1	1e+39
+2	-1e+39
+3	1e+38
+
+statement ok
+SET pg_numeric_as_varchar = true
+
+statement ok
+CALL postgres_clear_cache()
+
+query II
+SELECT typeof(n39), n39 FROM s.wide_numerics WHERE id = 1
+----
+VARCHAR	999999999999999999999999999999999999999
+
+statement ok
+RESET pg_numeric_as_varchar
+
+statement ok
+RESET max_decimal_width
+
+statement ok
+CALL postgres_clear_cache()
+
+query I
+SELECT typeof(n39) FROM s.wide_numerics LIMIT 1
+----
+DECIMAL(39,0)
+
+# the Postgres binary format: wide decimals written to a file are read back exactly
+statement ok
+COPY (SELECT * FROM s.wide_numerics ORDER BY id) TO '{TEST_DIR}/wide_decimals.bin' (FORMAT postgres_binary)
+
+query IIII
+SELECT id, n39, n40_4, n100_20 FROM read_postgres_binary('{TEST_DIR}/wide_decimals.bin', columns={id: 'INTEGER', n39: 'DECIMAL(39,0)', n40_4: 'DECIMAL(40,4)', n100_20: 'DECIMAL(100,20)', n1000: 'DECIMAL(1000,0)', n1000_500: 'DECIMAL(1000,500)'}) ORDER BY id
+----
+1	999999999999999999999999999999999999999	999999999999999999999999999999999999.9999	99999999999999999999999999999999999999999999999999999999999999999999999999999999.99999999999999999999
+2	-999999999999999999999999999999999999999	-999999999999999999999999999999999999.9999	-99999999999999999999999999999999999999999999999999999999999999999999999999999999.99999999999999999999
+3	100000000000000000000000000000000000000	0.0001	0.00000000000000000001
+4	0	0.0000	0.00000000000000000000
+5	170141183460469231731687303715884105727	123456789012345678901234567890123456.1234	12345678901234567890123456789012345678901234567890.12345678901234567890
+6	NULL	NULL	NULL
+
+query I
+SELECT count(*) FROM read_postgres_binary('{TEST_DIR}/wide_decimals.bin', columns={id: 'INTEGER', n39: 'DECIMAL(39,0)', n40_4: 'DECIMAL(40,4)', n100_20: 'DECIMAL(100,20)', n1000: 'DECIMAL(1000,0)', n1000_500: 'DECIMAL(1000,500)'}) f JOIN s.wide_numerics n ON f.id = n.id AND f.n1000 IS NOT DISTINCT FROM n.n1000 AND f.n1000_500 IS NOT DISTINCT FROM n.n1000_500 AND f.n39 IS NOT DISTINCT FROM n.n39
+----
+6
+
+# a value in the file that does not fit the declared type is an error
+statement error
+SELECT n39 FROM read_postgres_binary('{TEST_DIR}/wide_decimals.bin', columns={id: 'INTEGER', n39: 'DECIMAL(39,0)', n40_4: 'DECIMAL(40,4)', n100_20: 'DECIMAL(100,20)', n1000: 'DECIMAL(999,0)', n1000_500: 'DECIMAL(1000,500)'})
+----
+does not fit in the type DECIMAL(999,0)
+
+statement error
+SELECT n39 FROM read_postgres_binary('{TEST_DIR}/wide_decimals.bin', columns={id: 'INTEGER', n39: 'DECIMAL(39,0)', n40_4: 'DECIMAL(40,4)', n100_20: 'DECIMAL(100,19)', n1000: 'DECIMAL(1000,0)', n1000_500: 'DECIMAL(1000,500)'})
+----
+does not fit in the type DECIMAL(100,19)
+
+statement ok
+DROP TABLE s.wide_numerics
+
+statement ok
+DROP TABLE s.wide_numeric_scales
+
+statement ok
+DROP TABLE s.wide_numeric_arrays
+
+statement ok
+DROP TABLE s.wide_decimal_copy
+
+statement ok
+DROP TABLE s.wide_decimal_ctas
+
+statement ok
+DROP TABLE s.wide_decimal_lists
+
+statement ok
+DROP TABLE s.wide_decimal_hugeint
+
+statement ok
+DROP TABLE s.wide_decimal_sum

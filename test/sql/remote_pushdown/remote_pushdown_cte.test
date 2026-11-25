@@ -23,7 +23,7 @@ WITH c AS (SELECT g, SUM(i) AS s FROM s.rp_cte GROUP BY g) SELECT * FROM c ORDER
 query II
 EXPLAIN WITH c AS (SELECT g, SUM(i) AS s FROM s.rp_cte GROUP BY g) SELECT * FROM c ORDER BY g
 ----
-physical_plan	<REGEX>:(?s).*WITH "c" AS \(SELECT "g", CAST\(sum\("i"\) AS NUMERIC\(38,0\)\) AS "s" FROM "public"\."rp_cte" GROUP BY "g"\) SELECT \* FROM "c" ORDER BY "g" ASC NULLS LAST.*
+physical_plan	<REGEX>:(?s).*WITH "c" AS \(SELECT "g", CAST\(sum\("i"\) AS NUMERIC\(39,0\)\) AS "s" FROM "public"\."rp_cte" GROUP BY "g"\) SELECT \* FROM "c" ORDER BY "g" ASC NULLS LAST.*
 
 # chained CTEs
 query II rowsort

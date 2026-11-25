@@ -18,6 +18,8 @@
 #include "storage/postgres_catalog.hpp"
 #include "storage/postgres_transaction.hpp"
 #include "storage/postgres_schema_entry.hpp"
+#include "storage/postgres_capabilities.hpp"
+#include "duckdb/parser/expression/type_expression.hpp"
 
 namespace duckdb {
 
@@ -552,6 +554,17 @@ void PostgresTableSet::AlterTable(ClientContext &context, PostgresTransaction &t
 	}
 	sql += PostgresUtils::WriteIdentifier(info.new_column.Name().GetIdentifierName());
 	sql += " ";
+	LogicalType column_type = info.new_column.Type();
+	if (column_type.id() == LogicalTypeId::UNBOUND) {
+		auto &type_expr = UnboundType::GetTypeExpression(column_type);
+		if (type_expr && type_expr->GetExpressionClass() == ExpressionClass::TYPE) {
+			column_type = PostgresCapabilities::ResolveType(type_expr->Cast<TypeExpression>());
+		}
+	}
+	if (column_type.id() == LogicalTypeId::DECIMAL) {
+		// raises an error for a DECIMAL that Postgres cannot declare
+		PostgresUtils::ToPostgresType(column_type);
+	}
 	sql += info.new_column.Type().ToString();
 
 	if (info.new_column.HasDefaultValue()) {

@@ -67,7 +67,7 @@ SELECT n FROM s.unbound_numeric_arrays
 ----
 [12345678901234567890123456789012345678901234567890, 2]
 
-# bounded numerics with a precision above DuckDB's decimal maximum of 38 take the same fallback
+# bounded numerics with a precision above 38 are read as the exact DECIMAL, independent of the setting
 statement ok
 CALL postgres_execute('s', 'DROP TABLE IF EXISTS oversized_numerics')
 
@@ -83,7 +83,7 @@ CALL postgres_clear_cache();
 query I
 SELECT typeof(n) FROM s.oversized_numerics
 ----
-VARCHAR
+DECIMAL(50,10)
 
 query I
 SELECT n FROM s.oversized_numerics
@@ -104,7 +104,7 @@ DOUBLE
 query I
 SELECT typeof(n) FROM s.oversized_numerics
 ----
-DOUBLE
+DECIMAL(50,10)
 
 statement ok
 CALL postgres_execute('s', 'DROP TABLE unbound_numerics')

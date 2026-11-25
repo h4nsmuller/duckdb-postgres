@@ -286,7 +286,36 @@ PostgresTypeConfig PostgresTypeConfig::FromContext(optional_ptr<ClientContext> c
 	if (context->TryGetCurrentSetting("pg_numeric_nan_as_null", setting)) {
 		result.numeric_nan_as_null = BooleanValue::Get(setting);
 	}
+	if (context->TryGetCurrentSetting("max_decimal_width", setting) && !setting.IsNull()) {
+		auto width = MinValue<uint64_t>(setting.GetValue<uint64_t>(), NumericLimits<uint32_t>::Maximum());
+		result.max_decimal_width = MaxValue<uint32_t>(NumericCast<uint32_t>(width), Decimal::MAX_WIDTH_INT128);
+	}
 	return result;
+}
+
+constexpr int32_t PostgresUtils::MAX_NUMERIC_PRECISION;
+
+bool PostgresUtils::TryGetDecimalType(int64_t type_modifier, LogicalType &result) {
+	// the modifier of a NUMERIC(precision, scale) is ((precision << 16) | (scale & 0x7ff)) + 4
+	static constexpr int64_t VARHDRSZ = 4;
+	if (type_modifier < VARHDRSZ || type_modifier > NumericLimits<int32_t>::Maximum()) {
+		// no declared precision
+		return false;
+	}
+	auto precision = NumericCast<int32_t>(((type_modifier - VARHDRSZ) >> 16) & 0xffff);
+	// the scale is a signed 11-bit number: since Postgres 15 it ranges from -1000 to 1000
+	auto scale = NumericCast<int32_t>((((type_modifier - VARHDRSZ) & 0x7ff) ^ 1024) - 1024);
+	if (precision < 1 || precision > MAX_NUMERIC_PRECISION) {
+		return false;
+	}
+	if (scale < 0) {
+		// values are rounded to a multiple of 10^-scale: integers of up to precision - scale digits
+		result = LogicalType::DECIMAL(NumericCast<uint32_t>(precision - scale), 0);
+	} else {
+		// with a scale beyond the precision all values are fractions below 10^(precision - scale)
+		result = LogicalType::DECIMAL(NumericCast<uint32_t>(MaxValue(precision, scale)), NumericCast<uint32_t>(scale));
+	}
+	return true;
 }
 
 //! Redshift-specific types, all of them are read using the text protocol (Redshift does not support binary COPY)
@@ -385,17 +414,21 @@ LogicalType PostgresUtils::TypeToLogicalType(optional_ptr<ClientContext> context
 	} else if (pgtypename == "float8") {
 		return LogicalType::DOUBLE;
 	} else if (pgtypename == "numeric") {
-		auto width = ((type_info.type_modifier - sizeof(int32_t)) >> 16) & 0xffff;
-		auto scale = (((type_info.type_modifier - sizeof(int32_t)) & 0x7ff) ^ 1024) - 1024;
-		if (type_info.type_modifier == -1 || width < 0 || scale < 0 || width > 38) {
-			if (type_config.numeric_as_varchar) {
-				postgres_type.info = PostgresTypeAnnotation::CAST_TO_VARCHAR;
-				return LogicalType::VARCHAR;
-			}
-			postgres_type.info = PostgresTypeAnnotation::NUMERIC_AS_DOUBLE;
-			return LogicalType::DOUBLE;
+		// a NUMERIC with a declared precision and scale is the DECIMAL that holds exactly its values
+		LogicalType decimal_type;
+		if (PostgresUtils::TryGetDecimalType(type_info.type_modifier, decimal_type) &&
+		    DecimalType::GetWidth(decimal_type) <= type_config.max_decimal_width) {
+			return decimal_type;
 		}
-		return LogicalType::DECIMAL(width, scale);
+		// a NUMERIC without a declared precision has a scale per value and up to 131072 digits before the decimal
+		// point, no DECIMAL type holds all of its values
+		// (a declared NUMERIC lands here when the session does not bind decimals as wide: max_decimal_width)
+		if (type_config.numeric_as_varchar) {
+			postgres_type.info = PostgresTypeAnnotation::CAST_TO_VARCHAR;
+			return LogicalType::VARCHAR;
+		}
+		postgres_type.info = PostgresTypeAnnotation::NUMERIC_AS_DOUBLE;
+		return LogicalType::DOUBLE;
 	} else if (pgtypename == "char" || pgtypename == "bpchar") {
 		postgres_type.info = PostgresTypeAnnotation::FIXED_LENGTH_CHAR;
 		return LogicalType::VARCHAR;
@@ -506,7 +539,6 @@ LogicalType PostgresUtils::ToPostgresType(const LogicalType &input) {
 	case LogicalTypeId::ENUM:
 	case LogicalTypeId::BLOB:
 	case LogicalTypeId::DATE:
-	case LogicalTypeId::DECIMAL:
 	case LogicalTypeId::INTERVAL:
 	case LogicalTypeId::TIME:
 	case LogicalTypeId::TIME_TZ:
@@ -514,6 +546,13 @@ LogicalType PostgresUtils::ToPostgresType(const LogicalType &input) {
 	case LogicalTypeId::TIMESTAMP_TZ:
 	case LogicalTypeId::UUID:
 	case LogicalTypeId::VARCHAR:
+		return input;
+	case LogicalTypeId::DECIMAL:
+		if (DecimalType::GetWidth(input) > NumericCast<uint32_t>(MAX_NUMERIC_PRECISION)) {
+			throw BinderException("Postgres does not support the type \"%s\" - the precision of a Postgres NUMERIC "
+			                      "column is at most %d digits",
+			                      input.ToString(), MAX_NUMERIC_PRECISION);
+		}
 		return input;
 	case LogicalTypeId::LIST:
 		return LogicalType::LIST(ToPostgresType(ListType::GetChildType(input)));
@@ -539,7 +578,9 @@ LogicalType PostgresUtils::ToPostgresType(const LogicalType &input) {
 	case LogicalTypeId::UBIGINT:
 		return LogicalType::DECIMAL(20, 0);
 	case LogicalTypeId::HUGEINT:
-		return LogicalType::DOUBLE;
+	case LogicalTypeId::UHUGEINT:
+		// both have up to 39 digits
+		return LogicalType::DECIMAL(Decimal::MAX_WIDTH_INT128 + 1, 0);
 	case LogicalTypeId::GEOMETRY:
 		// Preserve CRS metadata so downstream TypeToString can emit a typmod-
 		// bearing PostGIS column type and the SRID survives a CREATE TABLE

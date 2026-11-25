@@ -1,5 +1,6 @@
 #include "postgres_binary_parser.hpp"
 #include "duckdb/common/operator/double_cast_operator.hpp"
+#include "duckdb/common/types/bignum_decimal.hpp"
 #include "duckdb/common/types/geometry.hpp"
 
 #include "duckdb/common/vector/flat_vector.hpp"
@@ -98,23 +99,17 @@ PostgresDecimalConfig PostgresBinaryParser::ReadDecimalConfig() {
 	return config;
 }
 
-PostgresDecimal<double> PostgresBinaryParser::ReadDecimalAsDouble() {
-	const auto config = ReadDecimalConfig();
-	if (config.sign == NUMERIC_NAN || config.sign == NUMERIC_PINF || config.sign == NUMERIC_NINF) {
-		return PostgresDecimal<double>(NonFiniteDecimalKindFromSign(config.sign));
-	}
-	if (config.ndigits == 0) {
-		return PostgresDecimal<double>(0);
-	}
-
+void PostgresBinaryParser::ReadDecimalDigits(const PostgresDecimalConfig &config, string &text) {
 	// A scientific exponent avoids expanding implicit zero groups or applying the display scale.
 	const auto exponent = (int32_t(config.weight) + 1 - int32_t(config.ndigits)) * DEC_DIGITS;
 	const auto exponent_text = std::to_string(exponent);
-	// Preserve the base-10000 digits and round only once when converting to DOUBLE.
-	string text;
-	text.reserve(idx_t(config.ndigits) * DEC_DIGITS + exponent_text.size() + 1 + config.is_negative);
+	text.clear();
+	text.reserve(idx_t(config.ndigits) * DEC_DIGITS + exponent_text.size() + 2 + config.is_negative);
 	if (config.is_negative) {
 		text.push_back('-');
+	}
+	if (config.ndigits == 0) {
+		text.push_back('0');
 	}
 	for (idx_t i = 0; i < config.ndigits; i++) {
 		const auto digit = ReadInteger<uint16_t>();
@@ -128,11 +123,58 @@ PostgresDecimal<double> PostgresBinaryParser::ReadDecimalAsDouble() {
 	}
 	text.push_back('e');
 	text += exponent_text;
+}
+
+PostgresDecimal<double> PostgresBinaryParser::ReadDecimalAsDouble() {
+	const auto config = ReadDecimalConfig();
+	if (config.sign == NUMERIC_NAN || config.sign == NUMERIC_PINF || config.sign == NUMERIC_NINF) {
+		return PostgresDecimal<double>(NonFiniteDecimalKindFromSign(config.sign));
+	}
+	if (config.ndigits == 0) {
+		return PostgresDecimal<double>(0);
+	}
+
+	// Preserve the base-10000 digits and round only once when converting to DOUBLE.
+	string text;
+	ReadDecimalDigits(config, text);
 	double result = 0;
 	if (!TryDoubleCast(text.c_str(), text.size(), result, false)) {
 		throw InvalidInputException("Could not convert Postgres numeric to DOUBLE");
 	}
 	return PostgresDecimal<double>(result);
+}
+
+void PostgresBinaryParser::ReadWideDecimal(const LogicalType &type, Vector &out_vec, idx_t output_offset) {
+	const auto config = ReadDecimalConfig();
+	if (config.sign == NUMERIC_NAN || config.sign == NUMERIC_PINF || config.sign == NUMERIC_NINF) {
+		// there are no non-finite decimals: NULL or an error
+		CheckDecimalKindSetNull(out_vec, output_offset, NonFiniteDecimalKindFromSign(config.sign));
+		return;
+	}
+	const auto width = DecimalType::GetWidth(type);
+	const auto scale = DecimalType::GetScale(type);
+	// the digits after the decimal point that are not zero: the value is never rounded
+	// (the last base-10000 digit can hold up to three zeros beyond the display scale)
+	const auto fractional_groups = int64_t(config.ndigits) - int64_t(config.weight) - 1;
+	string text;
+	ReadDecimalDigits(config, text);
+	bool fits = true;
+	if (fractional_groups > 0 && uint64_t(fractional_groups) * DEC_DIGITS > scale) {
+		auto excess = uint64_t(fractional_groups) * DEC_DIGITS - scale;
+		auto digits_end = text.find('e');
+		for (idx_t i = 0; i < excess && i < idx_t(config.ndigits) * DEC_DIGITS; i++) {
+			if (text[digits_end - 1 - i] != '0') {
+				fits = false;
+				break;
+			}
+		}
+	}
+	// builds the exact unscaled value from the digits and checks it against the width
+	string blob;
+	if (!fits || !DecimalHelper<bignum_t>::TryParse(text.c_str(), text.size(), width, scale, blob)) {
+		throw InvalidInputException("Postgres numeric value does not fit in the type %s", type.ToString());
+	}
+	FlatVector::GetDataMutable<string_t>(out_vec)[output_offset] = DecimalHelper<bignum_t>::Store(out_vec, blob).data;
 }
 
 void PostgresBinaryParser::ReadGeometry(const LogicalType &type, const PostgresType &postgres_type, Vector &out_vec,
@@ -349,6 +391,10 @@ void PostgresBinaryParser::ParseValue(const LogicalType &type, const PostgresTyp
 			}
 			break;
 		}
+		case PhysicalType::VARCHAR:
+			// more than 38 digits
+			ReadWideDecimal(type, out_vec, output_offset);
+			break;
 		default:
 			throw InvalidInputException("Unsupported decimal storage type");
 		}

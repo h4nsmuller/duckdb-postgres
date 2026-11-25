@@ -93,7 +93,6 @@ Known differences to executing the query in DuckDB:
 
 * Floating point results of statistical aggregates (e.g. `corr`, `regr_*`, `quantile_cont`) can differ in the last digits.
 * Postgres raises errors for floating point overflows, where DuckDB produces `inf`.
-* `HUGEINT` results are transferred as `NUMERIC(38, 0)` - values of 10^38 or more raise an error.
 * Duplicate result column names are made unique (e.g. `i` and `i_1`), like for the result of a subquery.
 * `CURRENT_DATE` / `CURRENT_TIMESTAMP` (without parentheses) are evaluated by Postgres, at the start of the Postgres transaction.
 * DuckDB orders strings byte-wise. When the database collation orders them differently (e.g. `en_US.UTF-8`), string ordering (`ORDER BY`, `<`, `min` / `max`, ...) is pushed down with the `C` collation (`COLLATE "C"`), which cannot use indexes built with the database collation. `SELECT DISTINCT` / set operations / `DISTINCT` aggregates ordered by strings are then executed locally, and `CREATE TABLE ... AS` / `CREATE VIEW` statements that order strings are not pushed down as a whole. Column-level collations are not taken into account.

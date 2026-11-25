@@ -21,7 +21,7 @@ SELECT SUM(i) FROM s.rp_basic
 query II
 EXPLAIN SELECT SUM(i) FROM s.rp_basic
 ----
-physical_plan	<REGEX>:(?s).*Postgres Query.*SELECT CAST\(sum\("i"\) AS NUMERIC\(38,0\)\) AS "sum\(i\)" FROM "public"."rp_basic".*
+physical_plan	<REGEX>:(?s).*Postgres Query.*SELECT CAST\(sum\("i"\) AS NUMERIC\(39,0\)\) AS "sum\(i\)" FROM "public"."rp_basic".*
 
 # the result types match the types DuckDB itself would produce
 query IIII
@@ -105,7 +105,7 @@ SELECT G, Sum(I) FROM S.RP_BASIC GROUP BY G ORDER BY G
 query II
 EXPLAIN SELECT G, Sum(I) FROM S.RP_BASIC GROUP BY G ORDER BY G
 ----
-physical_plan	<REGEX>:(?s).*SELECT "g", CAST\(sum\("i"\) AS NUMERIC\(38,0\)\) AS "sum\(I\)" FROM "public"."rp_basic" GROUP BY "g".*
+physical_plan	<REGEX>:(?s).*SELECT "g", CAST\(sum\("i"\) AS NUMERIC\(39,0\)\) AS "sum\(I\)" FROM "public"."rp_basic" GROUP BY "g".*
 
 # subqueries and joins
 query I

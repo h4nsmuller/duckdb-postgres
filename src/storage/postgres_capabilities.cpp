@@ -37,6 +37,8 @@
 #include "duckdb/parser/tableref/joinref.hpp"
 #include "duckdb/parser/tableref/subqueryref.hpp"
 
+#include "postgres_utils.hpp"
+
 namespace duckdb {
 
 //===--------------------------------------------------------------------===//
@@ -134,11 +136,13 @@ bool PostgresCapabilities::SupportsValue(const Value &value) {
 	case LogicalTypeId::UHUGEINT:
 	case LogicalTypeId::FLOAT:
 	case LogicalTypeId::DOUBLE:
-	case LogicalTypeId::DECIMAL:
 	case LogicalTypeId::TIME:
 	case LogicalTypeId::INTERVAL:
 	case LogicalTypeId::UUID:
 		return true;
+	case LogicalTypeId::DECIMAL:
+		// the precision of a NUMERIC type is at most 1000 digits
+		return DecimalType::GetWidth(value.type()) <= NumericCast<uint32_t>(PostgresUtils::MAX_NUMERIC_PRECISION);
 	case LogicalTypeId::VARCHAR:
 	case LogicalTypeId::BLOB: {
 		// Postgres text values cannot hold NUL bytes
@@ -191,10 +195,10 @@ LogicalType PostgresCapabilities::ResolveType(const TypeExpression &type_expr) {
 		if (children.size() == 1) {
 			scale = 0;
 		}
-		if (width < 1 || width > Decimal::MAX_WIDTH_DECIMAL || scale < 0 || scale > width) {
+		if (width < 1 || width > int64_t(NumericLimits<uint32_t>::Maximum()) || scale < 0 || scale > width) {
 			return LogicalType::INVALID;
 		}
-		return LogicalType::DECIMAL(NumericCast<uint8_t>(width), NumericCast<uint8_t>(scale));
+		return LogicalType::DECIMAL(NumericCast<uint32_t>(width), NumericCast<uint32_t>(scale));
 	}
 	case LogicalTypeId::VARCHAR:
 		// VARCHAR(n) does not truncate in DuckDB - the length modifier is ignored
@@ -266,7 +270,6 @@ bool PostgresCapabilities::SupportsCastType(const LogicalType &type) {
 	case LogicalTypeId::BIGINT:
 	case LogicalTypeId::DOUBLE:
 	case LogicalTypeId::FLOAT:
-	case LogicalTypeId::DECIMAL:
 	case LogicalTypeId::VARCHAR:
 	case LogicalTypeId::DATE:
 	case LogicalTypeId::TIME:
@@ -274,6 +277,9 @@ bool PostgresCapabilities::SupportsCastType(const LogicalType &type) {
 	case LogicalTypeId::TIMESTAMP_TZ:
 	case LogicalTypeId::UUID:
 		return true;
+	case LogicalTypeId::DECIMAL:
+		// the precision of a NUMERIC type is at most 1000 digits
+		return DecimalType::GetWidth(type) <= NumericCast<uint32_t>(PostgresUtils::MAX_NUMERIC_PRECISION);
 	default:
 		// Postgres has no unsigned / TINYINT types, intervals are formatted differently, ...
 		return false;

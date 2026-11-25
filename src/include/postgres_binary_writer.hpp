@@ -10,6 +10,7 @@
 
 #include "duckdb.hpp"
 #include "duckdb/common/operator/subtract.hpp"
+#include "duckdb/common/types/bignum_decimal.hpp"
 #include "duckdb/common/types/interval.hpp"
 #include "duckdb/common/types/geometry_crs.hpp"
 #include "duckdb/common/serializer/memory_stream.hpp"
@@ -212,6 +213,70 @@ public:
 		}
 	}
 
+	//! Writes a DECIMAL of more than 38 digits (its unscaled value is a BIGNUM blob)
+	void WriteWideDecimal(const bignum_t &value, uint32_t width, uint32_t scale) {
+		// the exact decimal text: [-]integer digits[.scale digits]
+		auto text = DecimalHelper<bignum_t>::ToString(value, width, scale);
+		idx_t pos = 0;
+		uint16_t sign = NUMERIC_POS;
+		if (!text.empty() && text[0] == '-') {
+			sign = NUMERIC_NEG;
+			pos++;
+		}
+		auto point = text.find('.', pos);
+		auto integer_end = point == string::npos ? text.size() : point;
+		// the integer digits without leading zeros
+		while (pos < integer_end && text[pos] == '0') {
+			pos++;
+		}
+		idx_t integer_digits = integer_end - pos;
+		idx_t fractional_digits = point == string::npos ? 0 : text.size() - point - 1;
+		if (fractional_digits != scale) {
+			throw InternalException("PostgresBinaryWriter - unexpected text for a DECIMAL of scale %d: \"%s\"", scale,
+			                        text);
+		}
+		// the digits are written in groups of four (base 10000), aligned at the decimal point
+		idx_t integer_groups = (integer_digits + DEC_DIGITS - 1) / DEC_DIGITS;
+		idx_t fractional_groups = (fractional_digits + DEC_DIGITS - 1) / DEC_DIGITS;
+		idx_t ndigits = integer_groups + fractional_groups;
+		if (integer_groups > idx_t(NumericLimits<int16_t>::Maximum()) + 1 || scale > NUMERIC_DSCALE_MASK ||
+		    ndigits > NumericLimits<uint16_t>::Maximum()) {
+			throw InvalidInputException(
+			    "A DECIMAL(%d,%d) value is out of range for a Postgres NUMERIC (up to 131072 digits before "
+			    "the decimal point and 16383 digits after it)",
+			    width, scale);
+		}
+		// size
+		WriteRawInteger<int32_t>(NumericCast<int32_t>(sizeof(uint16_t) * (4 + ndigits)));
+		// header
+		WriteRawInteger<uint16_t>(NumericCast<uint16_t>(ndigits));
+		WriteRawInteger<int16_t>(NumericCast<int16_t>(int64_t(integer_groups) - 1));
+		WriteRawInteger<uint16_t>(sign);
+		WriteRawInteger<uint16_t>(NumericCast<uint16_t>(scale));
+		// the first integer group is padded with zeros on the left
+		idx_t leading_zeros = integer_groups * DEC_DIGITS - integer_digits;
+		uint16_t group = 0;
+		idx_t group_digits = leading_zeros;
+		for (idx_t i = 0; i < integer_digits; i++) {
+			group = uint16_t(group * 10 + (text[pos + i] - '0'));
+			if (++group_digits == DEC_DIGITS) {
+				WriteRawInteger<uint16_t>(group);
+				group = 0;
+				group_digits = 0;
+			}
+		}
+		// the last fractional group is padded with zeros on the right
+		for (idx_t i = 0; i < fractional_groups * DEC_DIGITS; i++) {
+			auto digit = i < fractional_digits ? text[point + 1 + i] - '0' : 0;
+			group = uint16_t(group * 10 + digit);
+			if (++group_digits == DEC_DIGITS) {
+				WriteRawInteger<uint16_t>(group);
+				group = 0;
+				group_digits = 0;
+			}
+		}
+	}
+
 	void WriteRawBlob(string_t value) {
 		auto str_size = value.GetSize();
 		auto str_data = value.GetData();
@@ -355,6 +420,10 @@ public:
 				break;
 			case PhysicalType::INT128:
 				WriteDecimal<hugeint_t, DecimalConversionHugeint>(FlatVector::GetData<hugeint_t>(col)[r], scale);
+				break;
+			case PhysicalType::VARCHAR:
+				// more than 38 digits
+				WriteWideDecimal(bignum_t(FlatVector::GetData<string_t>(col)[r]), DecimalType::GetWidth(type), scale);
 				break;
 			default:
 				throw InternalException("Unsupported type for decimal");

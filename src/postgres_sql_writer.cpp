@@ -750,16 +750,21 @@ void PostgresSQLWriter::CollectResultNodes(const QueryNode &node) {
 
 //! Postgres produces unconstrained NUMERIC values for e.g. sum(BIGINT) or arithmetic on decimals, which are read back
 //! as DOUBLE - cast these to the exact NUMERIC type that corresponds to the type DuckDB binds the expression to
-static string PostgresExactNumericType(const LogicalType &type) {
+static string PostgresExactNumericType(const LogicalType &type, uint32_t max_decimal_width) {
 	switch (type.id()) {
 	case LogicalTypeId::HUGEINT:
-		return "NUMERIC(38,0)";
+		// 39 digits hold every value; a session that does not bind decimals as wide (max_decimal_width) transfers
+		// 38 digits, where values of 10^38 or more raise an error
+		return max_decimal_width > Decimal::MAX_WIDTH_INT128 ? "NUMERIC(39,0)" : "NUMERIC(38,0)";
 	case LogicalTypeId::UHUGEINT:
 		return "NUMERIC(39,0)";
 	case LogicalTypeId::DECIMAL:
+		if (DecimalType::GetWidth(type) > NumericCast<uint32_t>(PostgresUtils::MAX_NUMERIC_PRECISION)) {
+			throw PostgresPushdownNotSupported("unsupported type " + type.ToString());
+		}
 		return StringUtil::Format("NUMERIC(%d,%d)", DecimalType::GetWidth(type), DecimalType::GetScale(type));
 	case LogicalTypeId::LIST: {
-		auto child = PostgresExactNumericType(ListType::GetChildType(type));
+		auto child = PostgresExactNumericType(ListType::GetChildType(type), max_decimal_width);
 		return child.empty() ? child : child + "[]";
 	}
 	default:
@@ -768,7 +773,7 @@ static string PostgresExactNumericType(const LogicalType &type) {
 }
 
 string PostgresSQLWriter::WriteResultCast(const string &expr, const LogicalType &type) {
-	auto exact_type = PostgresExactNumericType(type);
+	auto exact_type = PostgresExactNumericType(type, PostgresTypeConfig::FromContext(&context).max_decimal_width);
 	return exact_type.empty() ? expr : "CAST(" + expr + " AS " + exact_type + ")";
 }
 
@@ -877,6 +882,10 @@ string PostgresSQLWriter::WriteType(const LogicalType &type) {
 	case LogicalTypeId::DOUBLE:
 		return "DOUBLE PRECISION";
 	case LogicalTypeId::DECIMAL:
+		if (DecimalType::GetWidth(type) > NumericCast<uint32_t>(PostgresUtils::MAX_NUMERIC_PRECISION)) {
+			// the precision of a NUMERIC type is at most 1000 digits
+			throw PostgresPushdownNotSupported("unsupported type " + type.ToString());
+		}
 		return StringUtil::Format("NUMERIC(%d,%d)", DecimalType::GetWidth(type), DecimalType::GetScale(type));
 	case LogicalTypeId::VARCHAR:
 		return "TEXT";

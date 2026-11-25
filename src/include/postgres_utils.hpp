@@ -36,6 +36,9 @@ struct PostgresTypeConfig {
 	bool array_as_varchar = false;
 	bool numeric_as_varchar = false;
 	bool numeric_nan_as_null = false;
+	//! The max_decimal_width setting of the session: a NUMERIC with a wider declared precision is read like a
+	//! NUMERIC without one (38 is the compatibility mode of that setting)
+	uint32_t max_decimal_width = Decimal::DEFAULT_MAX_WIDTH;
 
 	static PostgresTypeConfig FromContext(optional_ptr<ClientContext> context);
 };
@@ -96,6 +99,11 @@ public:
 	static string GetCustomStalenessQuery(ClientContext &context);
 	static string DataTypeToTypeName(const string &data_type);
 	static LogicalType ToPostgresType(const LogicalType &input);
+	//! The largest precision a NUMERIC column can be declared with
+	static constexpr int32_t MAX_NUMERIC_PRECISION = 1000;
+	//! The DECIMAL type that holds exactly the values of a NUMERIC with the given type modifier, false if the
+	//! modifier does not declare a precision
+	static bool TryGetDecimalType(int64_t type_modifier, LogicalType &result);
 	static LogicalType TypeToLogicalType(optional_ptr<ClientContext> context, optional_ptr<PostgresSchemaEntry> schema,
 	                                     const PostgresTypeConfig &type_config, const PostgresTypeData &input,
 	                                     PostgresType &postgres_type);

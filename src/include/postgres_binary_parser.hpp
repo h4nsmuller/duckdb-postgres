@@ -162,6 +162,10 @@ private:
 
 	PostgresDecimalConfig ReadDecimalConfig();
 	PostgresDecimal<double> ReadDecimalAsDouble();
+	//! Reads the base-10000 digits of a finite numeric into its exact decimal text (digits and an exponent)
+	void ReadDecimalDigits(const PostgresDecimalConfig &config, string &text);
+	//! Reads a numeric into a DECIMAL of more than 38 digits, throws if the value does not fit the type exactly
+	void ReadWideDecimal(const LogicalType &type, Vector &out_vec, idx_t output_offset);
 
 	static PostgresDecimalKind NonFiniteDecimalKindFromSign(uint16_t dec_sign);
 

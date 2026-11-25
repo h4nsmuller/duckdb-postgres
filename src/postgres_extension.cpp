@@ -185,7 +185,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	    LogicalType::BOOLEAN, Value::BOOLEAN(false), PostgresClearCacheFunction::ClearCacheOnSetting);
 	config.AddExtensionOption(
 	    "pg_numeric_as_varchar",
-	    "Read Postgres numerics without precision and scale or precision > 38 as varchar instead of double",
+	    "Read Postgres numerics without precision and scale as varchar instead of double",
 	    LogicalType::BOOLEAN, Value::BOOLEAN(false), PostgresClearCacheFunction::ClearCacheOnSetting);
 	config.AddExtensionOption(
 	    "pg_numeric_nan_as_null", "Read Postgres numeric NaN value as NULL instead of throwing an error",
