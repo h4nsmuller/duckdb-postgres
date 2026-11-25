@@ -40,7 +40,7 @@ SELECT divide(col1, 1) FROM s.filter_pushdown_test WHERE (col1 = 41 AND col2 = '
 query II
 EXPLAIN SELECT divide(col1, 1) FROM s.filter_pushdown_test WHERE (col1 = 41 AND col2 = 'foo') OR col2 = 'bar'
 ----
-physical_plan	<REGEX>:.*Postgres Scan.*Filters:.*\(\(col2 = 'foo'\) OR \(col2 = 'bar'\)\).*
+physical_plan	<REGEX>:.*Postgres Scan.*Filters:.*\(col2 IN \('foo', 'bar'\)\).*
 
 # ExpressionClass::BOUND_OPERATOR
 
