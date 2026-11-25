@@ -191,7 +191,7 @@ PostgresConnection &PostgresGlobalState::GetConnection(ClientContext &context) {
 	PostgresCatalog &catalog = attached_catalog.Get<PostgresCatalog>();
 	auto &transaction = PostgresTransaction::Get(context, catalog);
 	if (use_transaction) {
-		return transaction.GetConnection();
+		return transaction.GetConnection(context);
 	}
 	return transaction.GetConnectionWithoutTransaction();
 }
@@ -499,7 +499,7 @@ bool PostgresGlobalState::TryOpenNewConnection(ClientContext &context, PostgresL
 				// we cannot use the main thread but we haven't initiated ANY scan yet
 				// we HAVE to open a new connection
 				{
-					auto oauth_token_holder = SetThreadLocalOAuthTokenFromSessionOption(context);
+					auto oauth_token_holder = SetThreadLocalOAuthTokenFromSessionOption(context.GetContext());
 					lstate.pool_connection = pg_catalog->GetConnectionPool().ForceAcquire();
 				}
 				// unlike the main-thread connection this one is not in a transaction yet, so we pin it to
@@ -513,7 +513,7 @@ bool PostgresGlobalState::TryOpenNewConnection(ClientContext &context, PostgresL
 	}
 
 	{
-		auto oauth_token_holder = SetThreadLocalOAuthTokenFromSessionOption(context);
+		auto oauth_token_holder = SetThreadLocalOAuthTokenFromSessionOption(context.GetContext());
 		if (!pg_catalog->GetConnectionPool().TryGetConnection(lstate.pool_connection)) {
 			return false;
 		}
@@ -680,7 +680,7 @@ double PostgresScanProgress(ClientContext &context, const FunctionData *bind_dat
 	return MinValue<double>(100, progress);
 }
 
-static void PostgresScanSerialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data_p,
+static void PostgresScanSerialize(Serializer &serializer, const optional_ptr<const FunctionData> bind_data_p,
                                   const BoundTableFunction &function) {
 	throw NotImplementedException("PostgresScanSerialize");
 }

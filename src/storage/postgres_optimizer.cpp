@@ -77,7 +77,7 @@ static void OptimizePostgresScanLimitPushdown(unique_ptr<LogicalOperator> &op) {
 			return;
 		}
 
-		auto &bind_data = get.bind_data->Cast<PostgresBindData>();
+		auto &bind_data = get.bind_data.write().Cast<PostgresBindData>();
 
 		string generated_limit_clause = "";
 		if (limit.limit_val.Type() != LimitNodeType::UNSET) {
@@ -120,7 +120,7 @@ void PostgresOptimizer::Optimize(OptimizerExtensionInput &input, unique_ptr<Logi
 	for (auto &entry : operators.scans) {
 		auto multiple_scans = entry.second.size() > 1;
 		for (auto &scan : entry.second) {
-			auto &bind_data = scan.get().bind_data->Cast<PostgresBindData>();
+			auto &bind_data = scan.get().bind_data.write().Cast<PostgresBindData>();
 			// if there is a single scan in the plan we can always stream using the main thread
 			// if there is more than one scan we either (1) need to materialize, or (2) cannot use the main thread
 			if (multiple_scans) {

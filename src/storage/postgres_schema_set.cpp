@@ -160,13 +160,14 @@ void PostgresSchemaSet::LoadEntries(ClientContext &context, PostgresTransaction 
 	}
 }
 
-optional_ptr<CatalogEntry> PostgresSchemaSet::CreateSchema(PostgresTransaction &transaction, CreateSchemaInfo &info) {
+optional_ptr<CatalogEntry> PostgresSchemaSet::CreateSchema(ClientContext &context, PostgresTransaction &transaction,
+                                                           CreateSchemaInfo &info) {
 	string create_sql = "CREATE SCHEMA ";
 	if (info.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
 		create_sql += " IF NOT EXISTS";
 	}
 	create_sql += PostgresUtils::WriteIdentifier(info.GetQualifiedName().Schema().GetIdentifierName());
-	transaction.Query(create_sql);
+	transaction.Query(context, create_sql);
 	auto info_copy = info.Copy();
 	info.internal = PostgresSchemaEntry::SchemaIsInternal(info_copy->GetQualifiedName().Schema().GetIdentifierName());
 	auto schema_entry = make_shared_ptr<PostgresSchemaEntry>(catalog, info_copy->Cast<CreateSchemaInfo>());

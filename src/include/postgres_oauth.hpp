@@ -25,6 +25,6 @@ void PostgresInitOAuthHook();
 //! Gets the 'oauth_token' value from the 'pg_oauth_token option',
 //! sets it to a thread-local var to be available to PG auth hook;
 //! should be called at all call sites that are about to open the new connection.
-OAuthTokenHolder SetThreadLocalOAuthTokenFromSessionOption(ClientContext &ctx);
+OAuthTokenHolder SetThreadLocalOAuthTokenFromSessionOption(Context &ctx);
 
 } // namespace duckdb

@@ -27,13 +27,15 @@ public:
 	explicit PostgresTableSet(PostgresSchemaEntry &schema, unique_ptr<PostgresResultSlice> tables = nullptr);
 
 public:
-	optional_ptr<CatalogEntry> CreateTable(PostgresTransaction &transaction, BoundCreateTableInfo &info);
+	optional_ptr<CatalogEntry> CreateTable(ClientContext &context, PostgresTransaction &transaction,
+	                                       BoundCreateTableInfo &info);
 
-	static unique_ptr<PostgresTableInfo> GetTableInfo(PostgresTransaction &transaction, PostgresSchemaEntry &schema,
-	                                                  const string &table_name);
+	static unique_ptr<PostgresTableInfo> GetTableInfo(ClientContext &context, PostgresTransaction &transaction,
+	                                                  PostgresSchemaEntry &schema, const string &table_name);
 	static unique_ptr<PostgresTableInfo> GetTableInfo(ClientContext &context, PostgresConnection &connection,
 	                                                  const string &schema_name, const string &table_name);
-	optional_ptr<CatalogEntry> ReloadEntry(PostgresTransaction &transaction, const string &table_name) override;
+	optional_ptr<CatalogEntry> ReloadEntry(ClientContext &context, PostgresTransaction &transaction,
+	                                       const string &table_name) override;
 
 	void AlterTable(ClientContext &context, PostgresTransaction &transaction, AlterTableInfo &info);
 
@@ -55,15 +57,16 @@ protected:
 	void AlterTable(ClientContext &context, PostgresTransaction &transaction, AddColumnInfo &info);
 	void AlterTable(ClientContext &context, PostgresTransaction &transaction, RemoveColumnInfo &info);
 
-	static void AddColumn(optional_ptr<PostgresTransaction> transaction, optional_ptr<PostgresSchemaEntry> schema,
+	static void AddColumn(optional_ptr<ClientContext> context, optional_ptr<PostgresSchemaEntry> schema,
 	                      const PostgresTypeConfig &type_config, PostgresResult &result, idx_t row,
 	                      PostgresTableInfo &table_info);
 	static void AddConstraint(PostgresResult &result, idx_t row, PostgresTableInfo &table_info);
-	static void AddColumnOrConstraint(optional_ptr<PostgresTransaction> transaction,
-	                                  optional_ptr<PostgresSchemaEntry> schema, const PostgresTypeConfig &type_config,
-	                                  PostgresResult &result, idx_t row, PostgresTableInfo &table_info);
+	static void AddColumnOrConstraint(optional_ptr<ClientContext> context, optional_ptr<PostgresSchemaEntry> schema,
+	                                  const PostgresTypeConfig &type_config, PostgresResult &result, idx_t row,
+	                                  PostgresTableInfo &table_info);
 
-	void CreateEntries(PostgresTransaction &transaction, PostgresResult &result, idx_t start, idx_t end);
+	void CreateEntries(ClientContext &context, PostgresTransaction &transaction, PostgresResult &result, idx_t start,
+	                   idx_t end);
 
 private:
 	string GetAlterTablePrefix(ClientContext &context, PostgresTransaction &transaction, const string &name);

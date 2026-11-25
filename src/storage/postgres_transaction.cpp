@@ -12,7 +12,7 @@
 namespace duckdb {
 
 PostgresTransaction::PostgresTransaction(PostgresCatalog &postgres_catalog, TransactionManager &manager,
-                                         ClientContext &context)
+                                         Context &context)
     : Transaction(manager, context), access_mode(postgres_catalog.access_mode),
       isolation_level(postgres_catalog.isolation_level) {
 	auto oauth_token_holder = SetThreadLocalOAuthTokenFromSessionOption(context);
@@ -21,17 +21,13 @@ PostgresTransaction::PostgresTransaction(PostgresCatalog &postgres_catalog, Tran
 
 PostgresTransaction::~PostgresTransaction() = default;
 
-optional_ptr<ClientContext> PostgresTransaction::GetContext() {
-	return context.lock();
-}
-
 void PostgresTransaction::Start() {
 	transaction_state = PostgresTransactionState::TRANSACTION_NOT_YET_STARTED;
 }
-void PostgresTransaction::Commit() {
+void PostgresTransaction::Commit(ClientContext &context) {
 	if (transaction_state == PostgresTransactionState::TRANSACTION_STARTED) {
 		transaction_state = PostgresTransactionState::TRANSACTION_FINISHED;
-		GetConnectionRaw().Execute(GetContext(), "COMMIT");
+		GetConnectionRaw().Execute(context, "COMMIT");
 	}
 	vector<pair<reference<PostgresCatalogSet>, string>> to_promote;
 	{
@@ -42,10 +38,10 @@ void PostgresTransaction::Commit() {
 		entry.first.get().PromoteStalenessSignature(std::move(entry.second));
 	}
 }
-void PostgresTransaction::Rollback() {
+void PostgresTransaction::Rollback(ClientContext &context) {
 	if (transaction_state == PostgresTransactionState::TRANSACTION_STARTED) {
 		transaction_state = PostgresTransactionState::TRANSACTION_FINISHED;
-		GetConnectionRaw().Execute(GetContext(), "ROLLBACK");
+		GetConnectionRaw().Execute(context, "ROLLBACK");
 	}
 	lock_guard<mutex> l(pending_signatures_lock);
 	pending_signatures.clear();
@@ -86,12 +82,12 @@ PostgresConnection &PostgresTransaction::GetConnectionWithoutTransaction() {
 	return connection.GetConnection();
 }
 
-PostgresConnection &PostgresTransaction::GetConnection() {
+PostgresConnection &PostgresTransaction::GetConnection(ClientContext &context) {
 	auto &con = GetConnectionRaw();
 	if (transaction_state == PostgresTransactionState::TRANSACTION_NOT_YET_STARTED) {
 		transaction_state = PostgresTransactionState::TRANSACTION_STARTED;
 		string query = GetBeginTransactionQuery();
-		con.Execute(GetContext(), query);
+		con.Execute(context, query);
 	}
 	return con;
 }
@@ -108,18 +104,18 @@ string PostgresTransaction::GetDSN() {
 	return GetConnectionRaw().GetDSN();
 }
 
-unique_ptr<PostgresResult> PostgresTransaction::Query(const string &query) {
+unique_ptr<PostgresResult> PostgresTransaction::Query(ClientContext &context, const string &query) {
 	auto &con = GetConnectionRaw();
 	if (transaction_state == PostgresTransactionState::TRANSACTION_NOT_YET_STARTED) {
 		transaction_state = PostgresTransactionState::TRANSACTION_STARTED;
 		string transaction_start = GetBeginTransactionQuery();
 		transaction_start += ";\n";
-		return con.Query(GetContext(), transaction_start + query);
+		return con.Query(context, transaction_start + query);
 	}
-	return con.Query(GetContext(), query);
+	return con.Query(context, query);
 }
 
-unique_ptr<PostgresResult> PostgresTransaction::QueryWithoutTransaction(const string &query) {
+unique_ptr<PostgresResult> PostgresTransaction::QueryWithoutTransaction(ClientContext &context, const string &query) {
 	auto &con = GetConnectionRaw();
 	if (transaction_state == PostgresTransactionState::TRANSACTION_STARTED) {
 		throw std::runtime_error("Execution without a Transaction is not possible if a Transaction already started");
@@ -127,7 +123,7 @@ unique_ptr<PostgresResult> PostgresTransaction::QueryWithoutTransaction(const st
 	if (access_mode == AccessMode::READ_ONLY) {
 		throw std::runtime_error("Execution without a Transaction is not possible in Read Only Mode");
 	}
-	return con.Query(GetContext(), query);
+	return con.Query(context, query);
 }
 
 vector<unique_ptr<PostgresResult>> PostgresTransaction::ExecuteQueries(ClientContext &context, const string &queries) {
@@ -153,14 +149,14 @@ void PostgresTransaction::StageStalenessSignature(PostgresCatalogSet &catalog_se
 	pending_signatures.emplace_back(catalog_set, std::move(signature));
 }
 
-string PostgresTransaction::GetTemporarySchema() {
+string PostgresTransaction::GetTemporarySchema(ClientContext &context) {
 	if (temporary_schema.empty()) {
-		auto result = Query("SELECT nspname FROM pg_namespace WHERE oid = pg_my_temp_schema();");
+		auto result = Query(context, "SELECT nspname FROM pg_namespace WHERE oid = pg_my_temp_schema();");
 		if (result->Count() < 1) {
 			// no temporary tables exist yet in this connection
 			// create a random temporary table and return
-			Query("CREATE TEMPORARY TABLE __internal_temporary_table(i INTEGER)");
-			result = Query("SELECT nspname FROM pg_namespace WHERE oid = pg_my_temp_schema();");
+			Query(context, "CREATE TEMPORARY TABLE __internal_temporary_table(i INTEGER)");
+			result = Query(context, "SELECT nspname FROM pg_namespace WHERE oid = pg_my_temp_schema();");
 			if (result->Count() < 1) {
 				throw BinderException("Could not find temporary schema pg_temp_NNN for this connection");
 			}

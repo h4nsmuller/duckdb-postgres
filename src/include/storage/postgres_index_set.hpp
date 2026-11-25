@@ -24,8 +24,8 @@ public:
 public:
 	static string GetInitializeQuery(const vector<string> &schemas);
 
-	optional_ptr<CatalogEntry> CreateIndex(PostgresTransaction &transaction, CreateIndexInfo &info,
-	                                       TableCatalogEntry &table);
+	optional_ptr<CatalogEntry> CreateIndex(ClientContext &context, PostgresTransaction &transaction,
+	                                       CreateIndexInfo &info, TableCatalogEntry &table);
 
 protected:
 	void LoadEntries(ClientContext &context, PostgresTransaction &transaction) override;

@@ -27,7 +27,7 @@ public:
 	PostgresCatalogSet(Catalog &catalog, bool is_loaded);
 
 	optional_ptr<CatalogEntry> GetEntry(ClientContext &context, PostgresTransaction &transaction, const string &name);
-	void DropEntry(PostgresTransaction &transaction, DropInfo &info);
+	void DropEntry(ClientContext &context, PostgresTransaction &transaction, DropInfo &info);
 	void Scan(ClientContext &context, PostgresTransaction &transaction,
 	          const std::function<void(CatalogEntry &)> &callback);
 	virtual optional_ptr<CatalogEntry> CreateEntry(PostgresTransaction &transaction, shared_ptr<CatalogEntry> entry);
@@ -37,7 +37,8 @@ public:
 	virtual bool SupportReload() const {
 		return false;
 	}
-	virtual optional_ptr<CatalogEntry> ReloadEntry(PostgresTransaction &transaction, const string &name);
+	virtual optional_ptr<CatalogEntry> ReloadEntry(ClientContext &context, PostgresTransaction &transaction,
+	                                               const string &name);
 
 protected:
 	virtual void LoadEntries(ClientContext &context, PostgresTransaction &transaction) = 0;
@@ -51,7 +52,8 @@ protected:
 		return string();
 	}
 	void TryLoadEntries(ClientContext &context, PostgresTransaction &transaction);
-	void RefreshStalenessSignature(PostgresTransaction &transaction, bool use_transaction_connection);
+	void RefreshStalenessSignature(ClientContext &context, PostgresTransaction &transaction,
+	                               bool use_transaction_connection);
 
 private:
 	//! Runs LoadEntries + RefreshStalenessSignature, must be called with load_lock held

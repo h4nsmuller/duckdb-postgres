@@ -21,7 +21,8 @@ public:
 	explicit PostgresSchemaSet(Catalog &catalog, vector<string> schemas_to_load);
 
 public:
-	optional_ptr<CatalogEntry> CreateSchema(PostgresTransaction &transaction, CreateSchemaInfo &info);
+	optional_ptr<CatalogEntry> CreateSchema(ClientContext &context, PostgresTransaction &transaction,
+	                                        CreateSchemaInfo &info);
 
 	static string GetInitializeQuery(const vector<string> &schemas);
 	static string GetInitializeQueryInformationSchema(const vector<string> &schemas);

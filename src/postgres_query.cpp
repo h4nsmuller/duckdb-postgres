@@ -201,7 +201,7 @@ static unique_ptr<FunctionData> PGQueryBind(ClientContext &context, TableFunctio
 	} else {
 		auto &transaction = Transaction::Get(context, catalog).Cast<PostgresTransaction>();
 		if (use_transaction) {
-			con_ptr = &transaction.GetConnection();
+			con_ptr = &transaction.GetConnection(context);
 		} else {
 			con_ptr = &transaction.GetConnectionWithoutTransaction();
 		}

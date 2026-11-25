@@ -223,9 +223,9 @@ unique_ptr<SecretEntry> PostgresSecretStorage::StoreSecret(unique_ptr<const Base
 		    secrets_table_name, escaped_name, escaped_type, serialized);
 	}
 
-	PostgresConnection &conn = postgres_transaction.GetConnection();
+	PostgresConnection &conn = postgres_transaction.GetConnection(context);
 	string err_msg;
-	conn.TryQuery(postgres_transaction.GetContext(), query, &err_msg);
+	conn.TryQuery(context, query, &err_msg);
 
 	// Report the error filtering out the secret
 	if (!err_msg.empty()) {
@@ -256,7 +256,7 @@ vector<SecretEntry> PostgresSecretStorage::AllSecrets(optional_ptr<CatalogTransa
 	auto &postgres_transaction = PostgresTransaction::Get(context, postgres_catalog);
 
 	string query = StringUtil::Format("SELECT secret_name, serialized_secret FROM %s", secrets_table_name);
-	auto query_result = postgres_transaction.Query(query);
+	auto query_result = postgres_transaction.Query(context, query);
 
 	for (idx_t i = 0; i < query_result->Count(); i++) {
 		auto secret_name = query_result->GetString(i, 0);
@@ -298,7 +298,7 @@ void PostgresSecretStorage::DropSecretByName(const Identifier &name, OnEntryNotF
 	// Delete the secret
 	string escaped_name = EscapeSQLString(name.GetIdentifierName());
 	string query = StringUtil::Format("DELETE FROM %s WHERE secret_name = '%s'", secrets_table_name, escaped_name);
-	postgres_transaction.Query(query);
+	postgres_transaction.Query(context, query);
 }
 
 SecretMatch PostgresSecretStorage::LookupSecret(const string &path, const string &type,
@@ -318,7 +318,7 @@ SecretMatch PostgresSecretStorage::LookupSecret(const string &path, const string
 	string escaped_type = EscapeSQLString(StringUtil::Lower(type));
 	string query = StringUtil::Format("SELECT secret_name, serialized_secret FROM %s WHERE LOWER(secret_type) = '%s'",
 	                                  secrets_table_name, escaped_type);
-	auto query_result = postgres_transaction.Query(query);
+	auto query_result = postgres_transaction.Query(context, query);
 
 	for (idx_t i = 0; i < query_result->Count(); i++) {
 		auto secret_name = query_result->GetString(i, 0);
@@ -350,7 +350,7 @@ unique_ptr<SecretEntry> PostgresSecretStorage::GetSecretByName(const string &nam
 	string escaped_name = EscapeSQLString(name);
 	string query = StringUtil::Format("SELECT serialized_secret FROM %s WHERE secret_name = '%s'", secrets_table_name,
 	                                  escaped_name);
-	auto result = postgres_transaction.Query(query);
+	auto result = postgres_transaction.Query(context, query);
 
 	if (result->Count() == 0) {
 		return nullptr;

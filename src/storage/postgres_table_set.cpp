@@ -153,9 +153,9 @@ ORDER BY table_schema, table_name, ordinal_position;
 	return StringUtil::Replace(base_query, "${CONDITION}", condition);
 }
 
-void PostgresTableSet::AddColumn(optional_ptr<PostgresTransaction> transaction,
-                                 optional_ptr<PostgresSchemaEntry> schema, const PostgresTypeConfig &type_config,
-                                 PostgresResult &result, idx_t row, PostgresTableInfo &table_info) {
+void PostgresTableSet::AddColumn(optional_ptr<ClientContext> context, optional_ptr<PostgresSchemaEntry> schema,
+                                 const PostgresTypeConfig &type_config, PostgresResult &result, idx_t row,
+                                 PostgresTableInfo &table_info) {
 	PostgresTypeData type_info;
 	idx_t column_index = 3;
 	auto column_name = result.GetString(row, column_index);
@@ -174,7 +174,7 @@ void PostgresTableSet::AddColumn(optional_ptr<PostgresTransaction> transaction,
 	string default_value;
 
 	PostgresType postgres_type;
-	auto column_type = PostgresUtils::TypeToLogicalType(transaction, schema, type_config, type_info, postgres_type);
+	auto column_type = PostgresUtils::TypeToLogicalType(context, schema, type_config, type_info, postgres_type);
 	table_info.postgres_types.push_back(std::move(postgres_type));
 	table_info.postgres_names.push_back(column_name);
 	string type_name =
@@ -234,7 +234,7 @@ void PostgresTableSet::AddConstraint(PostgresResult &result, idx_t row, Postgres
 	create_info.constraints.push_back(make_uniq<UniqueConstraint>(std::move(columns), constraint_type == "p"));
 }
 
-void PostgresTableSet::AddColumnOrConstraint(optional_ptr<PostgresTransaction> transaction,
+void PostgresTableSet::AddColumnOrConstraint(optional_ptr<ClientContext> context,
                                              optional_ptr<PostgresSchemaEntry> schema,
                                              const PostgresTypeConfig &type_config, PostgresResult &result, idx_t row,
                                              PostgresTableInfo &table_info) {
@@ -242,15 +242,16 @@ void PostgresTableSet::AddColumnOrConstraint(optional_ptr<PostgresTransaction> t
 		// constraint
 		AddConstraint(result, row, table_info);
 	} else {
-		AddColumn(transaction, schema, type_config, result, row, table_info);
+		AddColumn(context, schema, type_config, result, row, table_info);
 	}
 }
 
-void PostgresTableSet::CreateEntries(PostgresTransaction &transaction, PostgresResult &result, idx_t start, idx_t end) {
+void PostgresTableSet::CreateEntries(ClientContext &context, PostgresTransaction &transaction, PostgresResult &result,
+                                     idx_t start, idx_t end) {
 	vector<unique_ptr<PostgresTableInfo>> tables;
 	unique_ptr<PostgresTableInfo> info;
 
-	auto type_config = PostgresTypeConfig::FromContext(transaction.GetContext());
+	auto type_config = PostgresTypeConfig::FromContext(context);
 	for (idx_t row = start; row < end; row++) {
 		auto table_name = result.GetString(row, 1);
 		if (!info || info->GetTableName() != table_name) {
@@ -264,7 +265,7 @@ void PostgresTableSet::CreateEntries(PostgresTransaction &transaction, PostgresR
 				info->create_info->comment = Value(result.GetString(row, 14));
 			}
 		}
-		AddColumnOrConstraint(&transaction, &schema, type_config, result, row, *info);
+		AddColumnOrConstraint(&context, &schema, type_config, result, row, *info);
 	}
 	if (info) {
 		tables.push_back(std::move(info));
@@ -277,7 +278,7 @@ void PostgresTableSet::CreateEntries(PostgresTransaction &transaction, PostgresR
 
 void PostgresTableSet::LoadEntries(ClientContext &context, PostgresTransaction &transaction) {
 	if (table_result) {
-		CreateEntries(transaction, table_result->GetResult(), table_result->start, table_result->end);
+		CreateEntries(context, transaction, table_result->GetResult(), table_result->start, table_result->end);
 		table_result.reset();
 	} else {
 		auto query = PostgresUtils::UseInformationSchemaIntrospection(context)
@@ -285,10 +286,10 @@ void PostgresTableSet::LoadEntries(ClientContext &context, PostgresTransaction &
 		                 : GetInitializeQuery(catalog.Cast<PostgresCatalog>().GetPostgresVersion(),
 		                                      schema.name.GetIdentifierName());
 
-		auto result = transaction.Query(query);
+		auto result = transaction.Query(context, query);
 		auto rows = result->Count();
 
-		CreateEntries(transaction, *result, 0, rows);
+		CreateEntries(context, transaction, *result, 0, rows);
 	}
 }
 
@@ -314,21 +315,21 @@ ORDER BY pg_class.oid;
 	return StringUtil::Replace(base_query, "${SCHEMA}", PostgresUtils::WriteLiteral(schema.name.GetIdentifierName()));
 }
 
-unique_ptr<PostgresTableInfo> PostgresTableSet::GetTableInfo(PostgresTransaction &transaction,
+unique_ptr<PostgresTableInfo> PostgresTableSet::GetTableInfo(ClientContext &context, PostgresTransaction &transaction,
                                                              PostgresSchemaEntry &schema, const string &table_name) {
-	auto query = PostgresUtils::UseInformationSchemaIntrospection(transaction.GetContext())
+	auto query = PostgresUtils::UseInformationSchemaIntrospection(context)
 	                 ? GetInitializeQueryInformationSchema(schema.name.GetIdentifierName(), table_name)
 	                 : GetInitializeQuery(schema.catalog.Cast<PostgresCatalog>().GetPostgresVersion(),
 	                                      schema.name.GetIdentifierName(), table_name);
-	auto result = transaction.Query(query);
+	auto result = transaction.Query(context, query);
 	auto rows = result->Count();
 	if (rows == 0) {
 		return nullptr;
 	}
 	auto table_info = make_uniq<PostgresTableInfo>(schema, table_name);
-	auto type_config = PostgresTypeConfig::FromContext(transaction.GetContext());
+	auto type_config = PostgresTypeConfig::FromContext(context);
 	for (idx_t row = 0; row < rows; row++) {
-		AddColumnOrConstraint(&transaction, &schema, type_config, *result, row, *table_info);
+		AddColumnOrConstraint(&context, &schema, type_config, *result, row, *table_info);
 	}
 	table_info->approx_num_pages = result->IsNull(0, 2) ? 0 : result->GetInt64(0, 2);
 	// Read table-level comment from 14
@@ -361,14 +362,15 @@ unique_ptr<PostgresTableInfo> PostgresTableSet::GetTableInfo(ClientContext &cont
 	return table_info;
 }
 
-optional_ptr<CatalogEntry> PostgresTableSet::ReloadEntry(PostgresTransaction &transaction, const string &table_name) {
-	auto table_info = GetTableInfo(transaction, schema, table_name);
+optional_ptr<CatalogEntry> PostgresTableSet::ReloadEntry(ClientContext &context, PostgresTransaction &transaction,
+                                                         const string &table_name) {
+	auto table_info = GetTableInfo(context, transaction, schema, table_name);
 	if (!table_info) {
 		return nullptr;
 	}
 	auto table_entry = make_shared_ptr<PostgresTableEntry>(catalog, schema, *table_info);
 	auto result = CreateEntry(transaction, std::move(table_entry));
-	RefreshStalenessSignature(transaction, /*use_transaction_connection=*/false);
+	RefreshStalenessSignature(context, transaction, /*use_transaction_connection=*/false);
 	return result;
 }
 
@@ -487,12 +489,13 @@ string GetPostgresCreateTable(CreateTableInfo &info) {
 	return ss.str();
 }
 
-optional_ptr<CatalogEntry> PostgresTableSet::CreateTable(PostgresTransaction &transaction, BoundCreateTableInfo &info) {
+optional_ptr<CatalogEntry> PostgresTableSet::CreateTable(ClientContext &context, PostgresTransaction &transaction,
+                                                         BoundCreateTableInfo &info) {
 	auto create_sql = GetPostgresCreateTable(info.Base());
-	transaction.Query(create_sql);
+	transaction.Query(context, create_sql);
 	auto tbl_entry = make_shared_ptr<PostgresTableEntry>(catalog, schema, info.Base());
 	auto result = CreateEntry(transaction, std::move(tbl_entry));
-	RefreshStalenessSignature(transaction, /*use_transaction_connection=*/true);
+	RefreshStalenessSignature(context, transaction, /*use_transaction_connection=*/true);
 	return result;
 }
 
@@ -526,7 +529,7 @@ void PostgresTableSet::AlterTable(ClientContext &context, PostgresTransaction &t
 	string sql = GetAlterTablePrefix(context, transaction, info.GetQualifiedName().Name().GetIdentifierName());
 	sql += " RENAME TO ";
 	sql += PostgresUtils::WriteIdentifier(info.new_table_name.GetIdentifierName());
-	transaction.Query(sql);
+	transaction.Query(context, sql);
 }
 
 void PostgresTableSet::AlterTable(ClientContext &context, PostgresTransaction &transaction, RenameColumnInfo &info) {
@@ -538,7 +541,7 @@ void PostgresTableSet::AlterTable(ClientContext &context, PostgresTransaction &t
 	sql += " TO ";
 	sql += PostgresUtils::WriteIdentifier(info.new_name.GetIdentifierName());
 
-	transaction.Query(sql);
+	transaction.Query(context, sql);
 }
 
 void PostgresTableSet::AlterTable(ClientContext &context, PostgresTransaction &transaction, AddColumnInfo &info) {
@@ -563,7 +566,7 @@ void PostgresTableSet::AlterTable(ClientContext &context, PostgresTransaction &t
 		sql += sql_str;
 	}
 
-	transaction.Query(sql);
+	transaction.Query(context, sql);
 }
 
 void PostgresTableSet::AlterTable(ClientContext &context, PostgresTransaction &transaction, RemoveColumnInfo &info) {
@@ -575,7 +578,7 @@ void PostgresTableSet::AlterTable(ClientContext &context, PostgresTransaction &t
 	}
 	string column_name = GetAlterTableColumnName(info.removed_column.GetIdentifierName(), entry);
 	sql += PostgresUtils::WriteIdentifier(column_name);
-	transaction.Query(sql);
+	transaction.Query(context, sql);
 }
 
 void PostgresTableSet::AlterTable(ClientContext &context, PostgresTransaction &transaction, AlterTableInfo &alter) {

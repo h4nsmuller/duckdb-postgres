@@ -91,7 +91,7 @@ unique_ptr<GlobalSinkState> PostgresUpdate::GetGlobalSinkState(ClientContext &co
 
 	auto &transaction = PostgresTransaction::Get(context, postgres_table.catalog);
 	auto result = make_uniq<PostgresUpdateGlobalState>(postgres_table);
-	auto &connection = transaction.GetConnection();
+	auto &connection = transaction.GetConnection(context);
 	// create a temporary table to stream the update data into
 	result->update_table_name = "update_data_" + UUID::ToString(UUID::GenerateRandomUUID());
 	connection.Execute(context, CreateUpdateTable(result->update_table_name, postgres_table, columns));
@@ -148,7 +148,7 @@ SinkResultType PostgresUpdate::Sink(ExecutionContext &context, DataChunk &chunk,
 	gstate.insert_chunk.SetChildCardinality(chunk.size());
 
 	auto &transaction = PostgresTransaction::Get(context.client, gstate.table.catalog);
-	auto &connection = transaction.GetConnection();
+	auto &connection = transaction.GetConnection(context.client);
 	if (!gstate.copy_is_active) {
 		// begin the COPY TO
 		string schema_name;
@@ -172,7 +172,7 @@ SinkFinalizeType PostgresUpdate::Finalize(Pipeline &pipeline, Event &event, Clie
                                           OperatorSinkFinalizeInput &input) const {
 	auto &gstate = input.global_state.Cast<PostgresUpdateGlobalState>();
 	auto &transaction = PostgresTransaction::Get(context, gstate.table.catalog);
-	auto &connection = transaction.GetConnection();
+	auto &connection = transaction.GetConnection(context);
 	gstate.FinishCopyTo(connection);
 	// merge the update_info table into the actual table (i.e. perform the actual update)
 	connection.Execute(context, gstate.update_sql);

@@ -98,7 +98,7 @@ void PostgresInitOAuthHook() {
 	PQsetAuthDataHook(OAuthBearerTokenHook);
 }
 
-OAuthTokenHolder SetThreadLocalOAuthTokenFromSessionOption(ClientContext &ctx) {
+OAuthTokenHolder SetThreadLocalOAuthTokenFromSessionOption(Context &ctx) {
 	Value val;
 	if (ctx.TryGetCurrentSetting("pg_oauth_token", val) && !val.IsNull()) {
 		std::string token = StringValue::Get(val);

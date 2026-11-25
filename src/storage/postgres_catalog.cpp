@@ -482,7 +482,7 @@ PostgresCatalog::PostgresCatalog(ClientContext &ctx, AttachedDatabase &db_p, str
 
 	PostgresPoolConnection connection;
 	{
-		auto oauth_token_holder = SetThreadLocalOAuthTokenFromSessionOption(ctx);
+		auto oauth_token_holder = SetThreadLocalOAuthTokenFromSessionOption(ctx.GetContext());
 		connection = connection_pool->Acquire();
 	}
 	this->version = connection.GetConnection().GetPostgresVersion(ctx);
@@ -606,7 +606,7 @@ optional_ptr<CatalogEntry> PostgresCatalog::CreateSchema(CatalogTransaction tran
 			try_drop.SetName(info.GetQualifiedName().Schema());
 			try_drop.if_not_found = OnEntryNotFound::RETURN_NULL;
 			try_drop.cascade = false;
-			schemas.DropEntry(postgres_transaction, try_drop);
+			schemas.DropEntry(transaction.GetContext(), postgres_transaction, try_drop);
 			break;
 		}
 		case OnCreateConflict::IGNORE_ON_CONFLICT:
@@ -617,12 +617,12 @@ optional_ptr<CatalogEntry> PostgresCatalog::CreateSchema(CatalogTransaction tran
 			                      info.GetQualifiedName().Schema());
 		}
 	}
-	return schemas.CreateSchema(postgres_transaction, info);
+	return schemas.CreateSchema(transaction.GetContext(), postgres_transaction, info);
 }
 
 void PostgresCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 	auto &postgres_transaction = PostgresTransaction::Get(context, *this);
-	return schemas.DropEntry(postgres_transaction, info);
+	return schemas.DropEntry(context, postgres_transaction, info);
 }
 
 void PostgresCatalog::ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) {
@@ -637,7 +637,7 @@ optional_ptr<SchemaCatalogEntry> PostgresCatalog::LookupSchema(CatalogTransactio
 	auto schema_name = schema_lookup.GetEntryName();
 	auto &postgres_transaction = PostgresTransaction::Get(transaction.GetContext(), *this);
 	if (schema_name == "pg_temp") {
-		schema_name = postgres_transaction.GetTemporarySchema();
+		schema_name = postgres_transaction.GetTemporarySchema(transaction.GetContext());
 	}
 	auto entry = schemas.GetEntry(transaction.GetContext(), postgres_transaction, schema_name);
 	if (!entry && schema_name == DEFAULT_SCHEMA) {
@@ -661,7 +661,7 @@ string PostgresCatalog::GetDBPath() {
 
 DatabaseSize PostgresCatalog::GetDatabaseSize(ClientContext &context) {
 	auto &postgres_transaction = PostgresTransaction::Get(context, *this);
-	auto result = postgres_transaction.Query("SELECT pg_database_size(current_database());");
+	auto result = postgres_transaction.Query(context, "SELECT pg_database_size(current_database());");
 	DatabaseSize size;
 	size.free_blocks = 0;
 	size.total_blocks = 0;

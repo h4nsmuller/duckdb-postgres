@@ -86,9 +86,9 @@ string PGGetCreateIndexSQL(CreateIndexInfo &info, TableCatalogEntry &tbl) {
 	return sql;
 }
 
-optional_ptr<CatalogEntry> PostgresIndexSet::CreateIndex(PostgresTransaction &transaction, CreateIndexInfo &info,
-                                                         TableCatalogEntry &table) {
-	transaction.Query(PGGetCreateIndexSQL(info, table));
+optional_ptr<CatalogEntry> PostgresIndexSet::CreateIndex(ClientContext &context, PostgresTransaction &transaction,
+                                                         CreateIndexInfo &info, TableCatalogEntry &table) {
+	transaction.Query(context, PGGetCreateIndexSQL(info, table));
 	auto index_entry =
 	    make_shared_ptr<PostgresIndexEntry>(schema.ParentCatalog(), schema, info, table.name.GetIdentifierName());
 	return CreateEntry(transaction, std::move(index_entry));

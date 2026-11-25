@@ -61,7 +61,7 @@ optional_ptr<CatalogEntry> PostgresSchemaEntry::CreateTable(CatalogTransaction t
 		// CREATE OR REPLACE - drop any existing entries first (if any)
 		TryDropEntry(transaction.GetContext(), CatalogType::TABLE_ENTRY, table_name);
 	}
-	return tables.CreateTable(postgres_transaction, info);
+	return tables.CreateTable(transaction.GetContext(), postgres_transaction, info);
 }
 
 optional_ptr<CatalogEntry> PostgresSchemaEntry::CreateFunction(CatalogTransaction transaction,
@@ -72,7 +72,7 @@ optional_ptr<CatalogEntry> PostgresSchemaEntry::CreateFunction(CatalogTransactio
 optional_ptr<CatalogEntry> PostgresSchemaEntry::CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
                                                             TableCatalogEntry &table) {
 	auto &postgres_transaction = GetPostgresTransaction(transaction);
-	return indexes.CreateIndex(postgres_transaction, info, table);
+	return indexes.CreateIndex(transaction.GetContext(), postgres_transaction, info, table);
 }
 
 string PGGetCreateViewSQL(PostgresSchemaEntry &schema, CreateViewInfo &info) {
@@ -113,8 +113,8 @@ optional_ptr<CatalogEntry> PostgresSchemaEntry::CreateView(CatalogTransaction tr
 		}
 	}
 	auto &postgres_transaction = GetPostgresTransaction(transaction);
-	postgres_transaction.Query(PGGetCreateViewSQL(*this, info));
-	return tables.ReloadEntry(postgres_transaction, info.GetViewName().GetIdentifierName());
+	postgres_transaction.Query(transaction.GetContext(), PGGetCreateViewSQL(*this, info));
+	return tables.ReloadEntry(transaction.GetContext(), postgres_transaction, info.GetViewName().GetIdentifierName());
 }
 
 optional_ptr<CatalogEntry> PostgresSchemaEntry::CreateType(CatalogTransaction transaction, CreateTypeInfo &info) {
@@ -124,7 +124,7 @@ optional_ptr<CatalogEntry> PostgresSchemaEntry::CreateType(CatalogTransaction tr
 		// CREATE OR REPLACE - drop any existing entries first (if any)
 		TryDropEntry(transaction.GetContext(), CatalogType::TYPE_ENTRY, info.GetTypeName().GetIdentifierName());
 	}
-	return types.CreateType(postgres_transaction, info);
+	return types.CreateType(transaction.GetContext(), postgres_transaction, info);
 }
 
 optional_ptr<CatalogEntry> PostgresSchemaEntry::CreateSequence(CatalogTransaction transaction,
@@ -145,11 +145,6 @@ optional_ptr<CatalogEntry> PostgresSchemaEntry::CreateCopyFunction(CatalogTransa
 optional_ptr<CatalogEntry> PostgresSchemaEntry::CreatePragmaFunction(CatalogTransaction transaction,
                                                                      CreatePragmaFunctionInfo &info) {
 	throw BinderException("Postgres databases do not support creating pragma functions");
-}
-
-optional_ptr<CatalogEntry> PostgresSchemaEntry::CreateCollation(CatalogTransaction transaction,
-                                                                CreateCollationInfo &info) {
-	throw BinderException("Postgres databases do not support creating collations");
 }
 
 void PostgresSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
@@ -188,7 +183,7 @@ void PostgresSchemaEntry::Scan(CatalogType type, const std::function<void(Catalo
 void PostgresSchemaEntry::DropEntry(ClientContext &context, DropInfo &info) {
 	info.SetQualifiedName(QualifiedName(info.GetQualifiedName().Catalog(), name, info.GetQualifiedName().Name()));
 	auto &postgres_transaction = PostgresTransaction::Get(context, catalog);
-	GetCatalogSet(info.type).DropEntry(postgres_transaction, info);
+	GetCatalogSet(info.type).DropEntry(context, postgres_transaction, info);
 }
 
 optional_ptr<CatalogEntry> PostgresSchemaEntry::LookupEntry(CatalogTransaction transaction,

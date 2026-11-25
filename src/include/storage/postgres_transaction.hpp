@@ -10,6 +10,7 @@
 
 #include "duckdb/transaction/transaction.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/main/context.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "postgres_connection.hpp"
 #include "storage/postgres_connection_pool.hpp"
@@ -24,29 +25,28 @@ enum class PostgresTransactionState { TRANSACTION_NOT_YET_STARTED, TRANSACTION_S
 
 class PostgresTransaction : public Transaction {
 public:
-	PostgresTransaction(PostgresCatalog &postgres_catalog, TransactionManager &manager, ClientContext &context);
+	PostgresTransaction(PostgresCatalog &postgres_catalog, TransactionManager &manager, Context &context);
 	~PostgresTransaction() override;
 
 	void Start();
-	void Commit();
-	void Rollback();
+	void Commit(ClientContext &context);
+	void Rollback(ClientContext &context);
 
 	PostgresConnection &GetConnectionWithoutTransaction();
-	PostgresConnection &GetConnection();
+	PostgresConnection &GetConnection(ClientContext &context);
 	//! ID of the pooled connection used by this transaction
 	uint64_t GetPoolConnectionId();
-	optional_ptr<ClientContext> GetContext();
 
 	string GetDSN();
-	unique_ptr<PostgresResult> Query(const string &query);
-	unique_ptr<PostgresResult> QueryWithoutTransaction(const string &query);
+	unique_ptr<PostgresResult> Query(ClientContext &context, const string &query);
+	unique_ptr<PostgresResult> QueryWithoutTransaction(ClientContext &context, const string &query);
 	vector<unique_ptr<PostgresResult>> ExecuteQueries(ClientContext &context, const string &queries);
 	static PostgresTransaction &Get(ClientContext &context, Catalog &catalog);
 	static string GetBeginTransactionQuery(PostgresIsolationLevel isolation_level, AccessMode access_mode);
 
 	optional_ptr<CatalogEntry> ReferenceEntry(shared_ptr<CatalogEntry> &entry);
 
-	string GetTemporarySchema();
+	string GetTemporarySchema(ClientContext &context);
 
 	PostgresTransactionState GetTransactionState() const {
 		return transaction_state;

@@ -68,7 +68,7 @@ TableFunction PostgresTableEntry::GetScanFunction(ClientContext &context, unique
 	result->dsn = transaction.GetDSN();
 	result->attach_path = pg_catalog.attach_path;
 	result->qualified_table_name = QualifiedName(ParentCatalog().GetName(), ParentSchema().name, name);
-	result->context_ptr = transaction.context;
+	result->context_ptr = context.shared_from_this();
 	for (auto &col : columns.Logical()) {
 		result->types.push_back(col.GetType());
 	}
@@ -93,7 +93,7 @@ TableFunction PostgresTableEntry::GetScanFunction(ClientContext &context, unique
 
 TableStorageInfo PostgresTableEntry::GetStorageInfo(ClientContext &context) {
 	auto &transaction = Transaction::Get(context, catalog).Cast<PostgresTransaction>();
-	auto &db = transaction.GetConnection();
+	auto &db = transaction.GetConnection(context);
 	TableStorageInfo result;
 	result.cardinality = 0;
 	// get index info based on constraints

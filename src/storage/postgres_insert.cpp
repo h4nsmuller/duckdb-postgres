@@ -195,7 +195,7 @@ unique_ptr<GlobalSinkState> PostgresInsert::GetGlobalSinkStatePlain(ClientContex
 SinkResultType PostgresInsert::SinkCopy(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const {
 	auto &gstate = input.global_state.Cast<PostgresInsertCopyGlobalState>();
 	auto &transaction = PostgresTransaction::Get(context.client, gstate.table.catalog);
-	auto &connection = transaction.GetConnection();
+	auto &connection = transaction.GetConnection(context.client);
 	auto &columns = gstate.columns;
 	chunk.Flatten();
 	columns.CheckGeneratedColumns(chunk);
@@ -299,7 +299,7 @@ SinkResultType PostgresInsert::SinkPlain(ExecutionContext &context, DataChunk &c
 
 	auto &gstate = input.global_state.Cast<PostgresInsertPlainGlobalState>();
 	auto &transaction = PostgresTransaction::Get(context.client, gstate.table.catalog);
-	auto &con = transaction.GetConnection();
+	auto &con = transaction.GetConnection(context.client);
 	auto &columns = gstate.columns;
 	// cast to varchar
 	if (chunk.ColumnCount() != gstate.varchar_chunk.ColumnCount()) {
@@ -417,7 +417,7 @@ SinkFinalizeType PostgresInsert::FinalizeCopy(Pipeline &pipeline, Event &event, 
                                               OperatorSinkFinalizeInput &input) const {
 	auto &gstate = input.global_state.Cast<PostgresInsertCopyGlobalState>();
 	auto &transaction = PostgresTransaction::Get(context, gstate.table.catalog);
-	auto &connection = transaction.GetConnection();
+	auto &connection = transaction.GetConnection(context);
 	gstate.FinishCopyTo(connection);
 	// update the approx_num_pages - approximately 8 bytes per column per row
 	idx_t bytes_per_page = 8192;
@@ -433,7 +433,7 @@ SinkFinalizeType PostgresInsert::FinalizePlain(Pipeline &pipeline, Event &event,
 	if (!gstate.insert_values.empty()) {
 		// perform the final insert
 		auto &transaction = PostgresTransaction::Get(context, gstate.table.catalog);
-		auto &con = transaction.GetConnection();
+		auto &con = transaction.GetConnection(context);
 		con.Execute(context, gstate.base_insert_query + gstate.insert_values);
 	}
 	return SinkFinalizeType::READY;
@@ -531,7 +531,7 @@ void PostgresCatalog::MaterializePostgresScans(PhysicalOperator &op) {
 	if (op.type == PhysicalOperatorType::TABLE_SCAN) {
 		auto &table_scan = op.Cast<PhysicalTableScan>();
 		if (PostgresCatalog::IsPostgresScan(table_scan.function.GetName().GetIdentifierName())) {
-			auto &bind_data = table_scan.bind_data->Cast<PostgresBindData>();
+			auto &bind_data = table_scan.bind_data.write().Cast<PostgresBindData>();
 			bind_data.requires_materialization = true;
 			bind_data.max_threads = 1;
 			bind_data.can_use_main_thread = true;

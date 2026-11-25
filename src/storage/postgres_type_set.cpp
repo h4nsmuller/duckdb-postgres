@@ -109,15 +109,15 @@ ORDER BY n.oid, t.oid, attrelid, attnum;
 	return StringUtil::Replace(base_query, "${CONDITION}", condition);
 }
 
-void PostgresTypeSet::CreateCompositeType(PostgresTransaction &transaction, PostgresResult &result, idx_t start_row,
-                                          idx_t end_row) {
+void PostgresTypeSet::CreateCompositeType(ClientContext &context, PostgresTransaction &transaction,
+                                          PostgresResult &result, idx_t start_row, idx_t end_row) {
 	PostgresType postgres_type;
 	CreateTypeInfo info;
 	postgres_type.oid = result.GetInt64(start_row, 1);
 	info.SetTypeName(Identifier(result.GetString(start_row, 2)));
 
 	child_list_t<LogicalType> child_types;
-	auto type_config = PostgresTypeConfig::FromContext(transaction.GetContext());
+	auto type_config = PostgresTypeConfig::FromContext(context);
 	for (idx_t row = start_row; row < end_row; row++) {
 		auto type_name = result.GetString(row, 3);
 		PostgresTypeData type_data;
@@ -126,7 +126,7 @@ void PostgresTypeSet::CreateCompositeType(PostgresTransaction &transaction, Post
 		PostgresType child_type;
 		child_types.push_back(
 		    make_pair(Identifier(type_name),
-		              PostgresUtils::TypeToLogicalType(&transaction, &schema, type_config, type_data, child_type)));
+		              PostgresUtils::TypeToLogicalType(&context, &schema, type_config, type_data, child_type)));
 		postgres_type.children.push_back(std::move(child_type));
 	}
 	info.type = LogicalType::STRUCT(std::move(child_types)).WithAlias(info.GetTypeName().GetIdentifierName());
@@ -134,7 +134,8 @@ void PostgresTypeSet::CreateCompositeType(PostgresTransaction &transaction, Post
 	CreateEntry(transaction, std::move(type_entry));
 }
 
-void PostgresTypeSet::InitializeCompositeTypes(PostgresTransaction &transaction, PostgresResultSlice &composite_types) {
+void PostgresTypeSet::InitializeCompositeTypes(ClientContext &context, PostgresTransaction &transaction,
+                                               PostgresResultSlice &composite_types) {
 	auto &result = composite_types.GetResult();
 	idx_t start = composite_types.start;
 	idx_t end = composite_types.end;
@@ -143,14 +144,14 @@ void PostgresTypeSet::InitializeCompositeTypes(PostgresTransaction &transaction,
 		auto oid = result.GetInt64(row, 1);
 		if (oid != current_oid) {
 			if (row > start) {
-				CreateCompositeType(transaction, result, start, row);
+				CreateCompositeType(context, transaction, result, start, row);
 			}
 			start = row;
 			current_oid = oid;
 		}
 	}
 	if (end > start) {
-		CreateCompositeType(transaction, result, start, end);
+		CreateCompositeType(context, transaction, result, start, end);
 	}
 }
 
@@ -159,7 +160,7 @@ void PostgresTypeSet::LoadEntries(ClientContext &context, PostgresTransaction &t
 		throw InternalException("PostgresTypeSet::LoadEntries not defined without enum/composite type result");
 	}
 	InitializeEnums(transaction, *enum_result);
-	InitializeCompositeTypes(transaction, *composite_type_result);
+	InitializeCompositeTypes(context, transaction, *composite_type_result);
 	enum_result.reset();
 	composite_type_result.reset();
 }
@@ -202,11 +203,12 @@ string GetCreateTypeSQL(CreateTypeInfo &info) {
 	return sql;
 }
 
-optional_ptr<CatalogEntry> PostgresTypeSet::CreateType(PostgresTransaction &transaction, CreateTypeInfo &info) {
-	auto &conn = transaction.GetConnection();
+optional_ptr<CatalogEntry> PostgresTypeSet::CreateType(ClientContext &context, PostgresTransaction &transaction,
+                                                       CreateTypeInfo &info) {
+	auto &conn = transaction.GetConnection(context);
 
 	auto create_sql = GetCreateTypeSQL(info);
-	conn.Execute(transaction.GetContext(), create_sql);
+	conn.Execute(context, create_sql);
 	info.type = info.type.WithAlias(info.GetTypeName().GetIdentifierName());
 	auto pg_type = PostgresUtils::CreateEmptyPostgresType(info.type);
 	auto type_entry = make_shared_ptr<PostgresTypeEntry>(catalog, schema, info, pg_type);

@@ -322,7 +322,7 @@ static bool TryRedshiftTypeToLogicalType(const PostgresTypeData &type_info, Post
 	return true;
 }
 
-LogicalType PostgresUtils::TypeToLogicalType(optional_ptr<PostgresTransaction> transaction,
+LogicalType PostgresUtils::TypeToLogicalType(optional_ptr<ClientContext> context,
                                              optional_ptr<PostgresSchemaEntry> schema,
                                              const PostgresTypeConfig &type_config, const PostgresTypeData &type_info,
                                              PostgresType &postgres_type) {
@@ -353,7 +353,7 @@ LogicalType PostgresUtils::TypeToLogicalType(optional_ptr<PostgresTransaction> t
 		child_type_info.type_schema = type_info.type_schema;
 		PostgresType child_pg_type;
 		auto child_type =
-		    PostgresUtils::TypeToLogicalType(transaction, schema, type_config, child_type_info, child_pg_type);
+		    PostgresUtils::TypeToLogicalType(context, schema, type_config, child_type_info, child_pg_type);
 		// populate the child OID from the actual Postgres type name
 		if (child_pg_type.oid == 0) {
 			child_pg_type.oid = TypeNameToPostgresOid(child_type_info.type_name);
@@ -462,16 +462,11 @@ LogicalType PostgresUtils::TypeToLogicalType(optional_ptr<PostgresTransaction> t
 		return LogicalType::LIST(LogicalType::DOUBLE);
 	}
 
-	if (!transaction || !schema || type_info.type_schema.empty()) {
+	if (!context || !schema || type_info.type_schema.empty()) {
 		// unsupported, or no type schema to resolve custom types in
 		// (information_schema introspection) - fallback to varchar
 		postgres_type.info = PostgresTypeAnnotation::CAST_TO_VARCHAR;
 		return LogicalType::VARCHAR;
-	}
-
-	auto context = transaction->GetContext();
-	if (!context) {
-		throw InternalException("Context is destroyed!?");
 	}
 
 	Identifier type_schema = Identifier(type_info.type_schema);

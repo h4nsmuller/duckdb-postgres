@@ -96,8 +96,7 @@ public:
 	static string GetCustomStalenessQuery(ClientContext &context);
 	static string DataTypeToTypeName(const string &data_type);
 	static LogicalType ToPostgresType(const LogicalType &input);
-	static LogicalType TypeToLogicalType(optional_ptr<PostgresTransaction> transaction,
-	                                     optional_ptr<PostgresSchemaEntry> schema,
+	static LogicalType TypeToLogicalType(optional_ptr<ClientContext> context, optional_ptr<PostgresSchemaEntry> schema,
 	                                     const PostgresTypeConfig &type_config, const PostgresTypeData &input,
 	                                     PostgresType &postgres_type);
 	static string TypeToString(const LogicalType &input);

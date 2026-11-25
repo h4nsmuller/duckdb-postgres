@@ -37,7 +37,7 @@ optional_ptr<CatalogEntry> PostgresCatalogSet::GetEntry(ClientContext &context, 
 	if (SupportReload()) {
 		lock_guard<mutex> lock(load_lock);
 		// try loading entries again - maybe there has been a change remotely
-		auto entry = ReloadEntry(transaction, name);
+		auto entry = ReloadEntry(context, transaction, name);
 		if (entry) {
 			return entry;
 		}
@@ -73,13 +73,13 @@ static unique_ptr<PostgresResult> RunStalenessQuery(Catalog &catalog, ClientCont
 	return connection.GetConnection().Query(context, staleness_query);
 }
 
-void PostgresCatalogSet::RefreshStalenessSignature(PostgresTransaction &transaction, bool use_transaction_connection) {
-	auto &context = *transaction.GetContext();
+void PostgresCatalogSet::RefreshStalenessSignature(ClientContext &context, PostgresTransaction &transaction,
+                                                   bool use_transaction_connection) {
 	auto staleness_query = GetStalenessQuery(context);
 	if (staleness_query.empty()) {
 		return;
 	}
-	auto result = use_transaction_connection ? transaction.Query(staleness_query)
+	auto result = use_transaction_connection ? transaction.Query(context, staleness_query)
 	                                         : RunStalenessQuery(catalog, context, staleness_query);
 	auto signature = ComputeStalenessSignature(*result);
 	if (transaction.GetTransactionState() == PostgresTransactionState::TRANSACTION_STARTED) {
@@ -104,7 +104,7 @@ void PostgresCatalogSet::LoadEntriesLocked(ClientContext &context, PostgresTrans
 		loading_thread = thread_id();
 		throw;
 	}
-	RefreshStalenessSignature(transaction, /*use_transaction_connection=*/false);
+	RefreshStalenessSignature(context, transaction, /*use_transaction_connection=*/false);
 	is_loaded = true;
 	loading_thread = thread_id();
 }
@@ -156,11 +156,12 @@ void PostgresCatalogSet::TryLoadEntries(ClientContext &context, PostgresTransact
 	LoadEntriesLocked(context, transaction);
 }
 
-optional_ptr<CatalogEntry> PostgresCatalogSet::ReloadEntry(PostgresTransaction &transaction, const string &name) {
+optional_ptr<CatalogEntry> PostgresCatalogSet::ReloadEntry(ClientContext &context, PostgresTransaction &transaction,
+                                                           const string &name) {
 	throw InternalException("PostgresCatalogSet does not support ReloadEntry");
 }
 
-void PostgresCatalogSet::DropEntry(PostgresTransaction &transaction, DropInfo &info) {
+void PostgresCatalogSet::DropEntry(ClientContext &context, PostgresTransaction &transaction, DropInfo &info) {
 	string drop_query = "DROP ";
 	drop_query += CatalogTypeToString(info.type) + " ";
 	if (info.if_not_found == OnEntryNotFound::RETURN_NULL) {
@@ -173,14 +174,14 @@ void PostgresCatalogSet::DropEntry(PostgresTransaction &transaction, DropInfo &i
 	if (info.cascade) {
 		drop_query += " CASCADE";
 	}
-	transaction.Query(drop_query);
+	transaction.Query(context, drop_query);
 
 	// erase the entry from the catalog set
 	{
 		lock_guard<mutex> l(entry_lock);
 		entries.erase(info.GetQualifiedName().Name().GetIdentifierName());
 	}
-	RefreshStalenessSignature(transaction, /*use_transaction_connection=*/true);
+	RefreshStalenessSignature(context, transaction, /*use_transaction_connection=*/true);
 }
 
 void PostgresCatalogSet::Scan(ClientContext &context, PostgresTransaction &transaction,

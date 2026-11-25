@@ -45,7 +45,7 @@ public:
 			return;
 		}
 		auto &transaction = PostgresTransaction::Get(context, table.catalog);
-		transaction.Query(GetDeleteSQL(table, ctid_list));
+		transaction.Query(context, GetDeleteSQL(table, ctid_list));
 		ctid_list = "";
 	}
 };
